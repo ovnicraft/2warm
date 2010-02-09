@@ -19,7 +19,26 @@
  * providing a customizable section.
  *
  * Original author:		Simon Riggs  simon@2ndquadrant.com
- * Current maintainer:	Simon Riggs
+ * Current maintainer:	Greg Smith   greg@2ndquadrant.com
+ *
+ * Enhancements in this version:
+ * 
+ * Logging:
+ *   - Logging level controllable
+ *   - Logging about current contents of archive
+ *
+ * Reliability/performance improvements:
+ *   - WAL filename consistency checking
+ *   - Link feature completely removed
+ *   - History files are never waited upon
+ *   - Ignores 00000001.history file absence without throwing an error
+ *
+ * Backwards compatibility:
+ *   - %r compatibility, use of that string doesn't throw an error
+ *   - Files to keep (-k) defaults to 256 if %r not used, as is the case
+ *     on a 8.2 server
+ *   - Compatibility with all server versions from 8.2 to 9.0
+ *  
  */
 #include "postgres_fe.h"
 
@@ -52,7 +71,6 @@ int			waittime = -1;		/* how long we have been waiting, -1 no wait
 int			maxwaittime = 0;	/* how long are we prepared to wait for? */
 int			keepfiles = 0;		/* number of WAL files to keep, 0 keep all */
 int			maxretries = 3;		/* number of retries on restore command */
-bool		debug = false;		/* are we debugging? */
 bool		need_cleanup = false;		/* do we need to remove files from
 										 * archive? */
 
@@ -95,9 +113,6 @@ char		exclusiveCleanupFileName[MAXPGPATH];		/* the file we need to
 
 static int	Failover = NoFailover;
 
-#define RESTORE_COMMAND_COPY 0
-#define RESTORE_COMMAND_LINK 1
-int			restoreCommandType;
 
 #define XLOG_DATA			 0
 #define XLOG_HISTORY		 1
@@ -108,6 +123,78 @@ int			nextWALFileType;
 	snprintf(restoreCommand, MAXPGPATH, cmd " \"%s\" \"%s\"", arg1, arg2)
 
 struct stat stat_buf;
+
+/*
+ * Provide a simple implementation of an elog interface, to make logging in
+ * this program read similarly to the rest of the backend source.  This
+ * borrows and matches as closely as possible the interfaces in elog.h and
+ * the simple logging implementation of ipc_test.c in hopes that a future
+ * change to use standard backend logging would require minimal code changes,
+ * even though that pulls a bit of extra baggage into here.
+ */
+
+#define DEBUG1      0
+#define LOG         1
+#define INFO        2
+#define NOTICE      3
+#define WARNING     4
+#define ERROR       5
+
+/*
+ * Figure out how to extract the name of the current function from this
+ * compiler, given that there are a couple of "standards" for that
+ */
+#ifdef HAVE_FUNCNAME__FUNC
+#define PG_FUNCNAME_MACRO   __func__
+#else
+#ifdef HAVE_FUNCNAME__FUNCTION
+#define PG_FUNCNAME_MACRO   __FUNCTION__
+#else
+#define PG_FUNCNAME_MACRO   NULL
+#endif
+#endif
+
+
+#define elog    elog_start(__FILE__, __LINE__, PG_FUNCNAME_MACRO), elog_finish
+extern void elog_start(const char *filename, int lineno, const char *funcname);
+extern void elog_finish(int elevel, const char *fmt,...)
+/* This extension allows gcc to check the format string for consistency with
+   the supplied arguments. */
+__attribute__((format(printf, 2, 3)));
+extern void elog_flush(void);
+
+static int verbosity = INFO;
+static bool timestamplogs = false;
+
+void
+elog_start(const char *filename, int lineno, const char *funcname)
+{
+}
+
+void
+elog_finish(int elevel, const char *fmt,...)
+{
+	if (elevel >= verbosity)
+	{
+		if (timestamplogs)
+		{
+			/* XXX TODO Add timestamps to the front of the output line */
+		}
+		fprintf(stderr, "%s", fmt);
+	}
+}
+
+/*
+ * For situations where it's deemed important to do so, allow explicitly
+ * flushing the log file.  Since many of those involve exiting the program,
+ * a more general log cleanup routine might be an improvement over this
+ * interface.
+ */
+void
+elog_flush()
+{
+	fflush(stderr);
+}
 
 /* =====================================================================
  *
@@ -125,49 +212,45 @@ struct stat stat_buf;
  */
 
 #define XLOG_DATA_FNAME_LEN		24
+#define XLOG_BACKUP_FNAME_LEN	31
+
+#define XLOG_FNAME_CHARS "0123456789ABCDEF"
 /* Reworked from access/xlog_internal.h */
 #define XLogFileName(fname, tli, log, seg)	\
 	snprintf(fname, XLOG_DATA_FNAME_LEN + 1, "%08X%08X%08X", tli, log, seg)
 
 /*
+ * Do a basic sanity check that a given file name looks like it could be
+ * a valid WAL segment
+ */
+static bool
+ValidWALFileName(char *fname)
+{
+	return (
+		strlen(fname) == XLOG_DATA_FNAME_LEN &&
+		strspn(fname, XLOG_FNAME_CHARS) == XLOG_DATA_FNAME_LEN
+		);
+}
+
+/*
  *	Initialize allows customized commands into the warm standby program.
  *
  *	As an example, and probably the common case, we use either
- *	cp/ln commands on *nix, or copy/move command on Windows.
+ *	the cp command on *nix or the copy command on Windows.
  */
 static void
 CustomizableInitialize(void)
 {
 #ifdef WIN32
 	snprintf(WALFilePath, MAXPGPATH, "%s\\%s", archiveLocation, nextWALFileName);
-	switch (restoreCommandType)
-	{
-		case RESTORE_COMMAND_LINK:
-			SET_RESTORE_COMMAND("mklink", WALFilePath, xlogFilePath);
-			break;
-		case RESTORE_COMMAND_COPY:
-		default:
-			SET_RESTORE_COMMAND("copy", WALFilePath, xlogFilePath);
-			break;
-	}
+	SET_RESTORE_COMMAND("copy", WALFilePath, xlogFilePath);
 #else
 	snprintf(WALFilePath, MAXPGPATH, "%s/%s", archiveLocation, nextWALFileName);
-	switch (restoreCommandType)
-	{
-		case RESTORE_COMMAND_LINK:
-#if HAVE_WORKING_LINK
-			SET_RESTORE_COMMAND("ln -s -f", WALFilePath, xlogFilePath);
-			break;
-#endif
-		case RESTORE_COMMAND_COPY:
-		default:
-			SET_RESTORE_COMMAND("cp", WALFilePath, xlogFilePath);
-			break;
-	}
+	SET_RESTORE_COMMAND("cp", WALFilePath, xlogFilePath);
 #endif
 
 	/*
-	 * This code assumes that archiveLocation is a directory You may wish to
+	 * This code assumes that archiveLocation is a directory.  You may wish to
 	 * add code to check for tape libraries, etc.. So, since it is a
 	 * directory, we use stat to test if its accessible
 	 */
@@ -190,17 +273,20 @@ CustomizableNextWALFileReady()
 	if (stat(WALFilePath, &stat_buf) == 0)
 	{
 		/*
-		 * If its a backup file, return immediately If its a regular file
-		 * return only if its the right size already
+		 * If it's a backup file, return immediately
 		 */
-		if (strlen(nextWALFileName) > 24 &&
-			strspn(nextWALFileName, "0123456789ABCDEF") == 24 &&
+		if (strlen(nextWALFileName) == XLOG_BACKUP_FNAME_LEN &&
+			strspn(nextWALFileName, XLOG_FNAME_CHARS) == XLOG_DATA_FNAME_LEN &&
 		strcmp(nextWALFileName + strlen(nextWALFileName) - strlen(".backup"),
 			   ".backup") == 0)
 		{
 			nextWALFileType = XLOG_BACKUP_LABEL;
 			return true;
 		}
+		
+		/*
+		 * If it's a regular file, return only if its the right size already
+		 */		
 		else if (stat_buf.st_size == XLOG_SEG_SIZE)
 		{
 #ifdef WIN32
@@ -217,19 +303,22 @@ CustomizableNextWALFileReady()
 			nextWALFileType = XLOG_DATA;
 			return true;
 		}
-
+		
 		/*
-		 * If still too small, wait until it is the correct size
+		 * Files that are too large can never be processed here
 		 */
 		if (stat_buf.st_size > XLOG_SEG_SIZE)
 		{
-			if (debug)
-			{
-				fprintf(stderr, "file size greater than expected\n");
-				fflush(stderr);
-			}
+		 	/* XXX Not sure if this "long int" conversion is legit */
+			elog(ERROR, "file size %lu greater than expected %u\n", 
+				(long int) stat_buf.st_size, XLOG_SEG_SIZE);
+			elog_flush();
 			exit(3);
 		}
+
+		/*
+		 * If still too small, exit to wait until it is the correct size
+		 */		
 	}
 
 	return false;
@@ -237,9 +326,14 @@ CustomizableNextWALFileReady()
 
 #define MaxSegmentsPerLogFile ( 0xFFFFFFFF / XLOG_SEG_SIZE )
 
-static void
+static bool
 CustomizableCleanupPriorWALFiles(void)
 {
+	int nremoved = 0;
+
+	if (!need_cleanup)
+		return false;
+
 	/*
 	 * Work out name of prior file from current filename
 	 */
@@ -252,7 +346,7 @@ CustomizableCleanupPriorWALFiles(void)
 		/*
 		 * Assume its OK to keep failing. The failure situation may change
 		 * over time, so we'd rather keep going on the main processing than
-		 * fail because we couldnt clean up yet.
+		 * fail because we couldn't clean up yet.
 		 */
 		if ((xldir = opendir(archiveLocation)) != NULL)
 		{
@@ -273,7 +367,7 @@ CustomizableCleanupPriorWALFiles(void)
 				 * in case this worries you.
 				 */
 				if (strlen(xlde->d_name) == XLOG_DATA_FNAME_LEN &&
-					strspn(xlde->d_name, "0123456789ABCDEF") == XLOG_DATA_FNAME_LEN &&
+					strspn(xlde->d_name, XLOG_FNAME_CHARS) == XLOG_DATA_FNAME_LEN &&
 				  strcmp(xlde->d_name + 8, exclusiveCleanupFileName + 8) < 0)
 				{
 #ifdef WIN32
@@ -282,27 +376,31 @@ CustomizableCleanupPriorWALFiles(void)
 					snprintf(WALFilePath, MAXPGPATH, "%s/%s", archiveLocation, xlde->d_name);
 #endif
 
-					if (debug)
-						fprintf(stderr, "\nremoving \"%s\"", WALFilePath);
+					elog(NOTICE, "\nremoving \"%s\"", WALFilePath);
 
 					rc = unlink(WALFilePath);
 					if (rc != 0)
 					{
-						fprintf(stderr, "\n%s: ERROR failed to remove \"%s\": %s",
-								progname, WALFilePath, strerror(errno));
+						elog(ERROR, "\n%s: ERROR failed to remove \"%s\": %s",
+							progname, WALFilePath, strerror(errno));
 						break;
 					}
+					nremoved++;
 				}
 			}
-			if (debug)
-				fprintf(stderr, "\n");
+			elog(NOTICE, "\n");
 		}
 		else
-			fprintf(stderr, "%s: archiveLocation \"%s\" open error\n", progname, archiveLocation);
+			elog(ERROR, "%s: archiveLocation \"%s\" open error\n", progname, archiveLocation);
 
 		closedir(xldir);
-		fflush(stderr);
+		elog_flush();
 	}
+
+	if (nremoved > 0)
+		return true;
+	else
+		return false;
 }
 
 /* =====================================================================
@@ -408,24 +506,24 @@ CheckForExternalTrigger(void)
 	if (stat_buf.st_size == 0)
 	{
 		Failover = SmartFailover;
-		fprintf(stderr, "trigger file found: smart failover\n");
-		fflush(stderr);
+		elog(WARNING,"trigger file found: smart failover\n");
+		elog_flush();
 		return;
 	}
 
 	if ((fd = open(triggerPath, O_RDWR, 0)) < 0)
 	{
-		fprintf(stderr, "WARNING: could not open \"%s\": %s\n",
+		elog(WARNING,"WARNING: could not open \"%s\": %s\n",
 				triggerPath, strerror(errno));
-		fflush(stderr);
+		elog_flush();
 		return;
 	}
 
 	if ((len = read(fd, buf, sizeof(buf))) < 0)
 	{
-		fprintf(stderr, "WARNING: could not read \"%s\": %s\n",
+		elog(WARNING,"WARNING: could not read \"%s\": %s\n",
 				triggerPath, strerror(errno));
-		fflush(stderr);
+		elog_flush();
 		close(fd);
 		return;
 	}
@@ -434,8 +532,8 @@ CheckForExternalTrigger(void)
 	if (strncmp(buf, "smart", 5) == 0)
 	{
 		Failover = SmartFailover;
-		fprintf(stderr, "trigger file found: smart failover\n");
-		fflush(stderr);
+		elog(WARNING, "trigger file found: smart failover\n");
+		elog_flush();
 		close(fd);
 		return;
 	}
@@ -444,8 +542,8 @@ CheckForExternalTrigger(void)
 	{
 		Failover = FastFailover;
 
-		fprintf(stderr, "trigger file found: fast failover\n");
-		fflush(stderr);
+		elog(WARNING, "trigger file found: fast failover\n");
+		elog_flush();
 
 		/*
 		 * Turn it into a "smart" trigger by truncating the file. Otherwise if
@@ -454,9 +552,9 @@ CheckForExternalTrigger(void)
 		 */
 		if (ftruncate(fd, 0) < 0)
 		{
-			fprintf(stderr, "WARNING: could not read \"%s\": %s\n",
+			elog(WARNING, "WARNING: could not read \"%s\": %s\n",
 					triggerPath, strerror(errno));
-			fflush(stderr);
+			elog_flush();
 		}
 		close(fd);
 
@@ -464,8 +562,8 @@ CheckForExternalTrigger(void)
 	}
 	close(fd);
 
-	fprintf(stderr, "WARNING: invalid content in \"%s\"\n", triggerPath);
-	fflush(stderr);
+	elog(WARNING, "WARNING: invalid content in \"%s\"\n", triggerPath);
+	elog_flush();
 	return;
 }
 
@@ -480,22 +578,16 @@ RestoreWALFileForRecovery(void)
 	int			rc = 0;
 	int			numretries = 0;
 
-	if (debug)
-	{
-		fprintf(stderr, "running restore		:");
-		fflush(stderr);
-	}
+	elog(NOTICE, "running restore		:");
+	elog_flush();
 
 	while (numretries <= maxretries)
 	{
 		rc = system(restoreCommand);
 		if (rc == 0)
 		{
-			if (debug)
-			{
-				fprintf(stderr, " OK\n");
-				fflush(stderr);
-			}
+			elog(NOTICE, " OK\n");
+			elog_flush();
 			return true;
 		}
 		pg_usleep(numretries++ * sleeptime * 1000000L);
@@ -504,15 +596,15 @@ RestoreWALFileForRecovery(void)
 	/*
 	 * Allow caller to add additional info
 	 */
-	if (debug)
-		fprintf(stderr, "not restored\n");
+	elog(DEBUG1, "not restored\n");
 	return false;
 }
 
 static void
 usage(void)
 {
-	printf("%s allows PostgreSQL warm standby servers to be configured.\n\n", progname);
+	printf("%s allows PostgreSQL warm standby servers to be configured.\n", progname);
+	printf("Compatible with PostgreSQL 8.2, 8.3, 8.4 and 9.0\n\n");
 	printf("Usage:\n");
 	printf("  %s [OPTION]... ARCHIVELOCATION NEXTWALFILE XLOGFILEPATH [RESTARTWALFILE]\n", progname);
 	printf("\n"
@@ -521,20 +613,23 @@ usage(void)
 		   "e.g.\n"
 		   "  restore_command = 'pg_standby -l /mnt/server/archiverdir %%f %%p %%r'\n");
 	printf("\nOptions:\n");
-	printf("  -c                 copies file from archive (default)\n");
-	printf("  -d                 generate lots of debugging output (testing only)\n");
 	printf("  -k NUMFILESTOKEEP  if RESTARTWALFILE not used, removes files prior to limit\n"
-		   "                     (0 keeps all)\n");
-	printf("  -l                 does nothing; use of link is now deprecated\n");
+		   "                     (0 keeps all, default=256)\n");
 	printf("  -r MAXRETRIES      max number of times to retry, with progressive wait\n"
 		   "                     (default=3)\n");
 	printf("  -s SLEEPTIME       seconds to wait between file checks (min=1, max=60,\n"
 		   "                     default=5)\n");
-	printf("  -t TRIGGERFILE     defines a trigger file to initiate failover (no default)\n");
+	printf("  -t TRIGGERFILE     defines a trigger file to initiate failover (no default, can use a signal instead on some platforms)\n");
 	printf("  -w MAXWAITTIME     max seconds to wait for a file (0=no limit) (default=0)\n");
+	printf("  -T                 Turn on timestamps on the output log entries (default is off)\n");	
+	printf("  -v VERBOSITY       verbosity of logging output (0-5, higher is more verbose, default = 2)\n");
 	printf("  --help             show this help, then exit\n");
-	printf("  --version          output version information, then exit\n");
-	printf("\nReport bugs to <pgsql-bugs@postgresql.org>.\n");
+	printf("  --version          output version information, then exit\n");	
+	printf("\nDeprecated options:\n");
+	printf("  -c                 copies file from archive (default and only option)\n");
+	printf("  -l                 does nothing; use of link is now deprecated\n");	
+	printf("  -d                 generate lots of debugging output (same as verbosity=5)\n");
+	printf("\nReport bugs to <simon@2ndQuadrant.com>.\n");
 }
 
 #ifndef WIN32
@@ -570,7 +665,7 @@ main(int argc, char **argv)
 		}
 		if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
-			puts("pg_standby (PostgreSQL) " PG_VERSION);
+			puts("pg_standby (PostgreSQL) " PG_VERSION " enhanced by 2ndQuadrant r1.1");
 			exit(0);
 		}
 	}
@@ -595,15 +690,15 @@ main(int argc, char **argv)
 	(void) signal(SIGQUIT, sigquit_handler);
 #endif
 
-	while ((c = getopt(argc, argv, "cdk:lr:s:t:w:")) != -1)
+	while ((c = getopt(argc, argv, "cdk:lr:s:t:w:v:T")) != -1)
 	{
 		switch (c)
 		{
-			case 'c':			/* Use copy */
-				restoreCommandType = RESTORE_COMMAND_COPY;
+			case 'l':			/* Use copy always; accept these parameter for backwards compatibility */
+			case 'c':
 				break;
 			case 'd':			/* Debug mode */
-				debug = true;
+				verbosity = DEBUG1;
 				break;
 			case 'k':			/* keepfiles */
 				keepfiles = atoi(optarg);
@@ -612,16 +707,6 @@ main(int argc, char **argv)
 					fprintf(stderr, "%s: -k keepfiles must be >= 0\n", progname);
 					exit(2);
 				}
-				break;
-			case 'l':			/* Use link */
-				/*
-				 * Link feature disabled, possibly permanently. Linking
-				 * causes a problem after recovery ends that is not currently
-				 * resolved by PostgreSQL. 25 Jun 2009
-				 */
-#ifdef NOT_USED
-				restoreCommandType = RESTORE_COMMAND_LINK;
-#endif
 				break;
 			case 'r':			/* Retries */
 				maxretries = atoi(optarg);
@@ -649,6 +734,27 @@ main(int argc, char **argv)
 					fprintf(stderr, "%s: -w maxwaittime incorrectly set\n", progname);
 					exit(2);
 				}
+				break;
+			case 'v':			/* Verbosity */				
+				/*
+				 * Verbosity inputs here have 5=most verbose, which is inverted
+				 * from how they're represented internally (to look more like
+				 * the standard elog values).  Inside the code, 0=most
+				 * verbose.  Invert the input value to convert between the
+				 * two scales, then do error checking against the internal
+				 * representation.
+				 */
+
+				verbosity = atoi(optarg);
+				verbosity = ERROR - verbosity;								
+				if (verbosity < DEBUG1 || verbosity > ERROR)
+				{
+					fprintf(stderr, "%s: -v verbosity incorrectly set\n", progname);
+					exit(2);
+				}
+				break;
+			case 'T':			/* Enable timestamps in log files */
+				timestamplogs = true;
 				break;
 			default:
 				fprintf(stderr, "Try \"%s --help\" for more information.\n", progname);
@@ -687,6 +793,12 @@ main(int argc, char **argv)
 	if (optind < argc)
 	{
 		nextWALFileName = argv[optind];
+		if (!ValidWALFileName(nextWALFileName))
+		{
+			fprintf(stderr, "%s: invalid NEXTWALFILENAME\n", progname);
+			fprintf(stderr, "Try \"%s --help\" for more information.\n", progname);
+			exit(2);
+		}
 		optind++;
 	}
 	else
@@ -710,7 +822,26 @@ main(int argc, char **argv)
 
 	if (optind < argc)
 	{
-		restartWALFileName = argv[optind];
+		/*
+		 * If %r is specified, that suggests we are running PostgreSQL 8.2.
+		 * In 8.3 or above, the %r would have been replaced with a
+		 * WAL file name. Similarly check for %R and use same behavior.
+		 */
+		if (strcmp(argv[optind], "%r") == 0 || strcmp(argv[optind], "%R") == 0)
+		{
+			if (keepfiles == 0)
+				keepfiles = 256;		/* 4 GB of WAL files */
+		}
+		else
+		{
+			restartWALFileName = argv[optind];
+			if (!ValidWALFileName(restartWALFileName))
+			{
+				fprintf(stderr, "%s: invalid RESTARTWALFILENAME\n", progname);
+				fprintf(stderr, "Try \"%s --help\" for more information.\n", progname);
+				exit(2);
+			}
+		}
 		optind++;
 	}
 
@@ -718,43 +849,63 @@ main(int argc, char **argv)
 
 	need_cleanup = SetWALFileNameForCleanup();
 
-	if (debug)
-	{
-		fprintf(stderr, "Trigger file 		: %s\n", triggerPath ? triggerPath : "<not set>");
-		fprintf(stderr, "Waiting for WAL file	: %s\n", nextWALFileName);
-		fprintf(stderr, "WAL file path		: %s\n", WALFilePath);
-		fprintf(stderr, "Restoring to		: %s\n", xlogFilePath);
-		fprintf(stderr, "Sleep interval		: %d second%s\n",
-				sleeptime, (sleeptime > 1 ? "s" : " "));
-		fprintf(stderr, "Max wait interval	: %d %s\n",
-				maxwaittime, (maxwaittime > 0 ? "seconds" : "forever"));
-		fprintf(stderr, "Command for restore	: %s\n", restoreCommand);
-		fprintf(stderr, "Keep archive history	: ");
-		if (need_cleanup)
-			fprintf(stderr, "%s and later\n", exclusiveCleanupFileName);
-		else
-			fprintf(stderr, "No cleanup required\n");
-		fflush(stderr);
-	}
+	elog(NOTICE, "Trigger file 		: %s\n", triggerPath ? triggerPath : "<not set>");
+	elog(NOTICE, "Waiting for WAL file	: %s\n", nextWALFileName);
+	elog(NOTICE, "WAL file path		: %s\n", WALFilePath);
+	elog(NOTICE, "Restoring to		: %s\n", xlogFilePath);
+	elog(NOTICE, "Sleep interval		: %d second%s\n",
+			sleeptime, (sleeptime > 1 ? "s" : " "));
+	elog(NOTICE, "Max wait interval	: %d %s\n",
+			maxwaittime, (maxwaittime > 0 ? "seconds" : "forever"));
+	elog(NOTICE, "Command for restore	: %s\n", restoreCommand);
+	elog(NOTICE, "Keep archive history	: ");
+	if (need_cleanup)
+		elog(NOTICE, "%s and later\n", exclusiveCleanupFileName);
+	else
+		elog(NOTICE, "No cleanup required\n");
+	elog_flush();
 
 	/*
 	 * Check for initial history file: always the first file to be requested
 	 * It's OK if the file isn't there - all other files need to wait
 	 */
+	 
+	/* XXX These comparisons with 8 seem weird.  Should use same full-length
+	   comparison adopted by the rest of the code now. */
 	if (strlen(nextWALFileName) > 8 &&
-		strspn(nextWALFileName, "0123456789ABCDEF") == 8 &&
+		strspn(nextWALFileName, XLOG_FNAME_CHARS) == 8 &&
 		strcmp(nextWALFileName + strlen(nextWALFileName) - strlen(".history"),
 			   ".history") == 0)
 	{
 		nextWALFileType = XLOG_HISTORY;
+		
+		/*
+		 * Validate the history file exists before trying to restore it.
+		 * If it's not there already, it's not expected to ever show up.
+		 * Exit rather than wasting time waiting on it on the restore loop.
+         */
+		if (stat(nextWALFileName, &stat_buf) != 0) {
+			elog(NOTICE,"Optional requested history file %s was not found\n",
+				nextWALFileName);
+			elog_flush();
+			exit(1);
+		}
+		
 		if (RestoreWALFileForRecovery())
 			exit(0);
 		else
 		{
-			if (debug)
+			/*
+			 * Skip error message if the first history file is not available,
+			 * since it's mistakenly asked for but never available in any
+			 * server version < 9.0.
+			 * XXX If the stat change above stays, this check is redundant
+			 * because that will exit before reaching this point.
+			 */
+			if (strcmp(nextWALFileName,  "00000001.history") != 0)
 			{
-				fprintf(stderr, "history file not found\n");
-				fflush(stderr);
+				elog(ERROR, "history file not found\n");
+				elog_flush();
 			}
 			exit(1);
 		}
@@ -771,11 +922,8 @@ main(int argc, char **argv)
 		if (signaled)
 		{
 			Failover = FastFailover;
-			if (debug)
-			{
-				fprintf(stderr, "signaled to exit: fast failover\n");
-				fflush(stderr);
-			}
+			elog(ERROR, "signaled to exit: fast failover\n");
+			elog_flush();
 		}
 #endif
 
@@ -789,15 +937,15 @@ main(int argc, char **argv)
 		if (CustomizableNextWALFileReady())
 		{
 			/*
-			 * Once we have restored this file successfully we can remove some
+			 * Once we have restored this file successfully, we can remove some
 			 * prior WAL files. If this restore fails we musn't remove any
-			 * file because some of them will be requested again immediately
+			 * file, because some of them will be requested again immediately
 			 * after the failed restore, or when we restart recovery.
 			 */
 			if (RestoreWALFileForRecovery())
 			{
-				if (need_cleanup)
-					CustomizableCleanupPriorWALFiles();
+				if (CustomizableCleanupPriorWALFiles())
+				    elog(INFO, "Archive retains WAL file %s and later\n", exclusiveCleanupFileName);
 
 				exit(0);
 			}
@@ -819,20 +967,16 @@ main(int argc, char **argv)
 		if (waittime >= maxwaittime && maxwaittime > 0)
 		{
 			Failover = FastFailover;
-			if (debug)
-			{
-				fprintf(stderr, "Timed out after %d seconds: fast failover\n",
-						waittime);
-				fflush(stderr);
-			}
+			elog(ERROR, "Timed out after %d seconds: fast failover\n",
+					waittime);
+			elog_flush();
 		}
-		if (debug)
-		{
-			fprintf(stderr, "WAL file not present yet.");
-			if (triggerPath)
-				fprintf(stderr, " Checking for trigger file...");
-			fprintf(stderr, "\n");
-			fflush(stderr);
-		}
+
+		elog(NOTICE, "WAL file not present yet.");
+		if (triggerPath)
+			elog(NOTICE, " Checking for trigger file...");
+		elog(NOTICE,"\n");
+		elog(INFO,".");
+		elog_flush();
 	}
 }
