@@ -6,10 +6,10 @@
 # Build and install customized pg_standby for 2warm
 
 pushd ../global/replication
-DEST=`dirname .`
+DEST=`pwd`
 popd
 
 rm -f pg_standby 
 make USE_PGXS=1
 cp pg_standby $DEST
-echo pg_standby installed to
+echo pg_standby installed to $DEST
