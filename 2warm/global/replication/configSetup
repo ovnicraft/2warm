@@ -1,0 +1,127 @@
+#!/bin/bash
+
+# configSetup
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Confirm environment is setup the way we expect before running
+# anything
+
+function find_base
+{
+	# Validate if a hard-coded PGROOT points somewhere useful
+	if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+	fi
+
+	# Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+function config_setup
+{
+    find_base
+    # Basic directory tree
+	GLOBAL=$PGROOT/2warm/global/
+	LOCAL=$PGROOT/2warm/local/
+	ARCHIVE=${PGROOT}_archive
+
+	# Lookup information about our configuration
+	OTHERNODE=`cat $LOCAL/replication/othernode`
+	DRNODE=
+	if [ -f "${LOCAL}/replication/drnode" ] ; then
+		DRNODE=`cat $LOCAL/replication/drnode`
+	fi
+}
+
+function require_pgdata
+{
+	if [ ! -d "${PGDATA}" ]; then
+		echo "ERROR:  PGDATA undefined or doesn't point to a valid directory"
+		exit 1
+	fi
+}
+
+function primary_only
+{
+  if [ -f "${PGDATA}/recovery.conf" ] ; then
+      echo "ERROR:  recovery.conf exists: we are the Standby node.  Run this on Primary node only."
+      exit 1
+  fi
+}
+
+function standby_only
+{
+  if [ ! -f "${PGDATA}/recovery.conf" ] ; then
+    echo "ERROR:  recovery.conf does not exist: we aren't the standby node"
+    exit 1
+  fi
+}
+
+function require_other
+{
+  if [ -z "$OTHERNODE" ] ; then
+      echo "ERROR:  a secondary other node is required for this script to operate."
+      exit 1
+  fi
+}
+
+function require_dr
+{
+  if [ -z "$DRNODE" ] ; then
+      echo "ERROR:  a DR relay is required for this script to operate."
+      exit 1
+  fi
+}
+
+function exit_on_error
+{
+  if [ $? -ne 0 ] ; then
+    ERROR="$1"
+    if [ -z "$ERROR" ] ; then
+      ERROR="Unexpected problem"
+    fi
+    echo ERROR:  ${ERROR}
+    exit 1
+  fi
+}
+
+function exit_if_primary
+{
+  # Can I logon to Postgres? If I can then I must be Primary, so exit
+  psql -c "select version();"
+  if [ $? -eq 0 ] ; then
+    echo "ERROR:  This node appears to be the primary, not the standby or DR relay."
+    exit 1
+  fi
+}
+
+function dump_config
+{
+  echo PGROOT=$PGROOT
+  echo PGDATA=$PGDATA
+  echo GLOBAL=$GLOBAL
+  echo LOCAL=$LOCAL
+  echo ARCHIVE=$ARCHIVE
+  echo OTHERNODE=$OTHERNODE
+  echo DRNODE=$DRNODE
+}
+
+# Do the basic config setup always.  Individual scripts will call the other
+# pre-requisite functions as appropriate for them.
+config_setup
+
+if [ "$1" = "debug" ] ; then
+  dump_config
+  echo "Exiting after debug config dump"
+  exit 1
+fi

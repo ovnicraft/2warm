@@ -1,0 +1,69 @@
+#!/bin/bash
+
+# copyToStandby
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Can/will take considerable amount of time
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+function find_base
+{
+    # Validate if a hard-coded PGROOT points somewhere useful
+    if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+    fi
+
+    # Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+# Bootstrap the rest of the standard initialization
+find_base
+source ${CONFIGSCRIPT}
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_pgdata
+primary_only
+
+OTHERNODE=`cat $PGROOT/2warm/local/replication/othernode`
+echo "Copying " $PGDATA " to " $OTHERNODE
+date
+
+# save config
+cp $PGDATA/postgresql.conf $LOCAL/postgresql.conf 
+
+# ensure we are actively archiving BEFORE we run pg_start_backup()
+touch $PGDATA/../2warm/local/replication/archiving_active
+
+# issue a log switch just to ensure we are definitely archiving
+psql -t -c "select 'archiving_active written at '||pg_switch_xlog()"
+
+# start backup
+psql -t -c "select 'Starting online backup at WAL file '|| pg_xlogfile_name(pg_start_backup('base_backup'));"
+exit_on_error "pg_start_backup failed"
+
+# make backup, no compression
+time rsync -cva --inplace --exclude=*pg_xlog* ${PGDATA}/ $OTHERNODE:$PGDATA
+
+# stop backup
+psql -t -c "select 'Stopping online backup at WAL file ' ||pg_xlogfile_name(pg_stop_backup());"
+exit_on_error "pg_stop_backup failed"
+
+exit 0

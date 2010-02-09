@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# restoreWALfile
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Intended for use as a restore_command
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+function find_base
+{
+    # Validate if a hard-coded PGROOT points somewhere useful
+    if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+    fi
+
+    # Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+# Bootstrap the rest of the standard initialization
+find_base
+source ${CONFIGSCRIPT}
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+# restore file if it exists
+$GLOBAL/replication/pg_standby -c -d -k 96 -r 1 -s 30 -w 0 -t trigger $ARCHIVE $1 $2
+exit_on_error "pg_standby returned error $?"
+
+exit 0

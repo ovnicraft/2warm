@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# flushPrimary
+# Copyright (c) 2ndQuadrant, 2009
+#
+# First part of a clean switchover from Primary to Standby
+# Next steps are 
+# 2) Shutdown database server on Primary
+# 3) Run triggerStandby on Standby node
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+function find_base
+{
+    # Validate if a hard-coded PGROOT points somewhere useful
+    if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+    fi
+
+    # Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+# Bootstrap the rest of the standard initialization
+find_base
+source ${CONFIGSCRIPT}
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_pgdata
+primary_only
+
+# copy log files
+# TODO Is this really necessary?
+rsync -cav ${PGDATA}/pg_log/* ${ARCHIVE}
+
+# checkpoint 
+psql -c "checkpoint;"
+exit_on_error "Checkpoint failed"
+
+psql -c "select pg_stop_backup();" > /dev/null 2> /dev/null
+
+# checkpoint again 
+psql -c "checkpoint;"
+exit_on_error "Second checkpoint failed"
+
+# Give archiver time to finish processing
+sleep 20
+
+# flush files to standby archive
+rsync -cz $PGDATA/pg_xlog/* $OTHERNODE:$ARCHIVE/
+exit_on_error "rsync to $OTHERNODE failed"
+
+# flush files to DR archive
+if [ -n "$DRNODE" ] ; then
+  rsync -cz $PGDATA/pg_xlog/* $DRNODE:$ARCHIVE/
+  exit_on_error "rsync to $DRNODE failed"
+fi
+
+exit 0

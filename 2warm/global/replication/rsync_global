@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# rsync_global
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Utility script to sync 2warm directories between nodes.
+# Intended to be run from current Primary to other nodes
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+function find_base
+{
+    # Validate if a hard-coded PGROOT points somewhere useful
+    if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+    fi
+
+    # Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+# Bootstrap the rest of the standard initialization
+find_base
+source ${CONFIGSCRIPT}
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+
+echo Running rsync $GLOBAL to $OTHERNODE 
+rsync -cavr $GLOBAL ${OTHERNODE}:${GLOBAL}
+exit_on_error "rsync to ${OTHERNODE}:${GLOBAL} failed"
+
+if [ -n "${DRNODE}" ]
+then
+	echo Running rsync $GLOBAL to $DRNODE 
+	rsync -cavr $GLOBAL ${DRNODE}:${GLOBAL}
+    exit_on_error "rsync to ${DRNODE}:${GLOBAL} failed"
+fi

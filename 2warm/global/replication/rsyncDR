@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# rsyncDR 
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Runs in cron - does nothing on Primary
+# WAL file relay from Standby to DR node.
+#
+# To add script to cron you must
+# 1) Add postgres to /etc/cron.allow
+# 2) crontab -e
+#      */5 * * * * /var/lib/pgsql/2warm/global/replication/rsyncDR
+#
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+function find_base
+{
+    # Validate if a hard-coded PGROOT points somewhere useful
+    if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+    fi
+
+    # Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+# Bootstrap the rest of the standard initialization
+find_base
+source ${CONFIGSCRIPT}
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_dr
+standby_only
+
+# Can I logon to Postgres? If I can then I must be Primary, so exit
+psql -c "select version();"
+if [ $? -eq 0 ] ; then
+    echo "ERROR:  This node appears to be the primary, not the DR relay."
+	exit 
+fi
+
+# sync archive with DR 
+rsync -cazq ${PGDATA}_archive/ ${DRNODE}:${PGDATA}_archive
+exit_on_error "rsync to ${DRNODE} failed"
+
+exit 0

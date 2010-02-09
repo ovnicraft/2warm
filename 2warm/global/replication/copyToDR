@@ -1,0 +1,67 @@
+#/bin/bash
+
+# copyToDR
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Copies files to DR
+# Can/will take very very considerable amount of time
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+function find_base
+{
+    # Validate if a hard-coded PGROOT points somewhere useful
+    if [ ! -d "${PGROOT}" ] ; then
+        # Figure out where this script is running from and guess
+        # where PGROOT is at from there.  All of the major scripts
+        # we run are 3 directory levels up from the PGROOT base.
+        SCRIPTDIR=`dirname $0`
+        pushd $SCRIPTDIR/../../..
+        PGROOT=`pwd`
+        popd
+    fi
+
+    # Basic validation that PGROOT has expected scripts
+    CONFIGSCRIPT="${PGROOT}/2warm/global/replication/configSetup"
+    if [ ! -f "${CONFIGSCRIPT}" ] ; then
+      echo "ERROR:  PGROOT does not point to a complete 2warm installation."
+      exit 1
+    fi
+}
+
+# Bootstrap the rest of the standard initialization
+find_base
+source ${CONFIGSCRIPT}
+
+#####################################################################
+# End of generic environment setup
+##################################################################### 
+
+require_pgdata
+primary_only
+require_dr
+
+echo "Copying " $PGDATA " to " $DRNODE
+date
+
+# ensure we are actively archiving BEFORE we run pg_start_backup()
+touch $LOCAL/replication/archiving_active
+
+# issue a log switch just to ensure we are definitely archiving
+psql -t -c "select 'archiving_active written at '||pg_switch_xlog()"
+
+# start backup
+psql -t -c "select 'Starting online backup at WAL file '|| pg_xlogfile_name(pg_start_backup('base_backup'));"
+exit_on_error "pg_start_backup failed"
+
+# make backup
+time rsync -czva --inplace --exclude=*pg_xlog* $PGDATA/ $DRNODE:$PGDATA
+
+# stop backup
+psql -t -c "select 'Stopping online backup at WAL file ' ||pg_xlogfile_name(pg_stop_backup());"
+exit_on_error "pg_stop_backup failed"
+
+exit 0

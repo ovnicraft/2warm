@@ -1,0 +1,15 @@
+#!/bin/bash -e
+
+# build
+# Copyright (c) 2ndQuadrant, 2009
+#
+# Build and install customized pg_standby for 2warm
+
+pushd ../global/replication
+DEST=`dirname .`
+popd
+
+rm -f pg_standby 
+make USE_PGXS=1
+cp pg_standby $DEST
+echo pg_standby installed to
