@@ -46,7 +46,7 @@ source ${CONFIGSCRIPT}
 #####################################################################
 
 require_pgdata
-require_standby
+standby_only
 
 # ensure that archiving won't activate immediately on new Primary
 rm -f $LOCAL/replication/archiving_active
