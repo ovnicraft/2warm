@@ -62,4 +62,7 @@ else
   exit_on_error "Could not write to $PGDATA/trigger"
 fi
 
+echo Server now triggered to start
+echo Once recovery is complete and the server running, delete $PGDATA/trigger to reduce the chance of a future triggering accident
+
 exit 0

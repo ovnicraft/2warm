@@ -47,13 +47,14 @@ primary_only
 require_archive
 
 # copy log files
-# TODO Is this really necessary?
-rsync -cav ${PGDATA}/pg_log/* ${ARCHIVE}
+# Not used in current implementation
+#rsync -cav ${PGDATA}/pg_log/* ${ARCHIVE}
 
 # checkpoint 
 psql -c "checkpoint;"
 exit_on_error "Checkpoint failed"
 
+# There shouldn't be any backups going on; cancel just to be safe
 psql -c "select pg_stop_backup();" > /dev/null 2> /dev/null
 
 # checkpoint again 
