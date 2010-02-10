@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# rsync_global
+# distrib2warm
 # Copyright (c) 2ndQuadrant, 2009
 #
 # Utility script to sync 2warm directories between nodes.
