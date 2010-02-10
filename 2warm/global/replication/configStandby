@@ -41,6 +41,7 @@ source ${CONFIGSCRIPT}
 
 require_pgdata
 exit_if_primary
+require_archive
 
 # Copy in files to configure Standby
 cp $LOCAL/postgresql.conf $PGDATA/postgresql.conf
@@ -57,5 +58,7 @@ rm -f $PGDATA/trigger
 
 rm -rf $PGDATA/pg_xlog/*
 mkdir -p $PGDATA/pg_xlog/archive_status
+
+echo Standby system is ready, shipped archives will appear in ${ARCHIVE}
 
 exit 0

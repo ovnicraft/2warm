@@ -33,7 +33,7 @@ function config_setup
     # Basic directory tree
 	GLOBAL=${PGROOT}/2warm/global/
 	LOCAL=${PGROOT}/2warm/local/
-	ARCHIVE=${PGROOT}/archive
+	ARCHIVE=${PGDATA}/archive
 
 	# Lookup information about our configuration
 	OTHERNODE=`cat $LOCAL/replication/othernode`
@@ -85,6 +85,7 @@ function require_dr
 
 function require_archive
 {
+  require_pgdata
   mkdir -p ${ARCHIVE}
   if [ ! -d ${ARCHIVE} ] ; then
     echo ERROR:  Do not have and could not create archive directory ${ARCHIVE}
@@ -107,9 +108,9 @@ function exit_on_error
 function exit_if_primary
 {
   # Can I logon to Postgres? If I can then I must be Primary, so exit
-  psql -c "select version();"
+  psql -c "select version();" >> /dev/null
   if [ $? -eq 0 ] ; then
-    echo "ERROR:  This node appears to be the primary, not the standby or DR relay."
+    echo "ERROR:  This node is running a database and appears to be the primary, not the standby or DR relay."
     exit 1
   fi
 }

@@ -42,7 +42,6 @@ source ${CONFIGSCRIPT}
 require_pgdata
 primary_only
 
-OTHERNODE=`cat $PGROOT/2warm/local/replication/othernode`
 echo "Copying " $PGDATA " to " $OTHERNODE
 date
 

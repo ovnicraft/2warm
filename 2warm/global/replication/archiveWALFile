@@ -43,7 +43,6 @@ source ${CONFIGSCRIPT}
 #####################################################################
 
 require_other
-require_archive
 
 # archive file
 if [ -f "${LOCAL}/replication/archiving_active" ] ; then
