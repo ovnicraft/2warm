@@ -39,6 +39,8 @@ source ${CONFIGSCRIPT}
 # End of generic environment setup
 #####################################################################
 
+require_archive
+
 # restore file if it exists
 $GLOBAL/replication/pg_standby -c -d -k 96 -r 1 -s 30 -w 0 -t trigger $ARCHIVE $1 $2
 exit_on_error "pg_standby returned error $?"

@@ -43,6 +43,7 @@ source ${CONFIGSCRIPT}
 #####################################################################
 
 require_other
+require_archive
 
 # archive file
 if [ -f "${LOCAL}/replication/archiving_active" ] ; then
@@ -52,6 +53,8 @@ if [ -f "${LOCAL}/replication/archiving_active" ] ; then
 	  rsync -cz $1/ ${DRNODE}:$ARCHIVE/$2
 	  exit 1
     fi
+else
+  echo Archiving not active:  ignoring $1.  Would normally save to ${OTHERNODE}:$ARCHIVE/$2.
 fi
 
 exit 0

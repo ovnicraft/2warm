@@ -14,9 +14,9 @@ function find_base
         # where PGROOT is at from there.  All of the major scripts
         # we run are 3 directory levels up from the PGROOT base.
         SCRIPTDIR=`dirname $0`
-        pushd $SCRIPTDIR/../../..
+        pushd $SCRIPTDIR/../../.. >> /dev/null
         PGROOT=`pwd`
-        popd
+        popd >> /dev/null
 	fi
 
 	# Basic validation that PGROOT has expected scripts
@@ -31,9 +31,9 @@ function config_setup
 {
     find_base
     # Basic directory tree
-	GLOBAL=$PGROOT/2warm/global/
-	LOCAL=$PGROOT/2warm/local/
-	ARCHIVE=${PGROOT}_archive
+	GLOBAL=${PGROOT}/2warm/global/
+	LOCAL=${PGROOT}/2warm/local/
+	ARCHIVE=${PGROOT}/archive
 
 	# Lookup information about our configuration
 	OTHERNODE=`cat $LOCAL/replication/othernode`
@@ -80,6 +80,15 @@ function require_dr
   if [ -z "$DRNODE" ] ; then
       echo "ERROR:  a DR relay is required for this script to operate."
       exit 1
+  fi
+}
+
+function require_archive
+{
+  mkdir -p ${ARCHIVE}
+  if [ ! -d ${ARCHIVE} ] ; then
+    echo ERROR:  Do not have and could not create archive directory ${ARCHIVE}
+    exit 1
   fi
 }
 
