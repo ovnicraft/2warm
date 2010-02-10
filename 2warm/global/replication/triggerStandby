@@ -24,9 +24,9 @@ function find_base
         # where PGROOT is at from there.  All of the major scripts
         # we run are 3 directory levels up from the PGROOT base.
         SCRIPTDIR=`dirname $0`
-        pushd $SCRIPTDIR/../../..
+        pushd $SCRIPTDIR/../../.. >> /dev/null
         PGROOT=`pwd`
-        popd
+        popd >> /dev/null
     fi
 
     # Basic validation that PGROOT has expected scripts

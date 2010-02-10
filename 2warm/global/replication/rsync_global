@@ -18,9 +18,9 @@ function find_base
         # where PGROOT is at from there.  All of the major scripts
         # we run are 3 directory levels up from the PGROOT base.
         SCRIPTDIR=`dirname $0`
-        pushd $SCRIPTDIR/../../..
+        pushd $SCRIPTDIR/../../.. >> /dev/null
         PGROOT=`pwd`
-        popd
+        popd >> /dev/null
     fi
 
     # Basic validation that PGROOT has expected scripts
@@ -40,13 +40,13 @@ source ${CONFIGSCRIPT}
 #####################################################################
 
 
-echo Running rsync $GLOBAL to $OTHERNODE 
-rsync -cavr $GLOBAL ${OTHERNODE}:${GLOBAL}
-exit_on_error "rsync to ${OTHERNODE}:${GLOBAL} failed"
+echo Running rsync $PGROOT/2warm to $OTHERNODE 
+rsync -cavr --copy-links $PGROOT/2warm ${OTHERNODE}:${PGROOT}/
+exit_on_error "rsync to ${OTHERNODE}:${PGROOT} failed"
 
 if [ -n "${DRNODE}" ]
 then
-	echo Running rsync $GLOBAL to $DRNODE 
-	rsync -cavr $GLOBAL ${DRNODE}:${GLOBAL}
-    exit_on_error "rsync to ${DRNODE}:${GLOBAL} failed"
+	echo Running rsync $PGROOT/2warm to $DRNODE 
+	rsync -cavr --copy-links $PGROOT/2warm ${DRNODE}:${PGROOT}/
+    exit_on_error "rsync to ${DRNODE}:${PGROOT} failed"
 fi
