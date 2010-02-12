@@ -4,9 +4,7 @@
 # Copyright (c) 2ndQuadrant, 2009
 #
 # First part of a clean switchover from Primary to Standby
-# Next steps are 
-# 2) Shutdown database server on Primary
-# 3) Run triggerStandby on Standby node
+# Next step is to run triggerStandby on Standby node
 
 #####################################################################
 # Generic environment - shared by many of the scripts here.  Confirm
@@ -46,23 +44,27 @@ require_pgdata
 primary_only
 require_archive
 
-# copy log files
-# Not used in current implementation
+# Save database log files, which might be copied over to the standby
+# Not done in current implementation
 #rsync -cav ${PGDATA}/pg_log/* ${ARCHIVE}
 
-# checkpoint 
-psql -c "checkpoint;"
-exit_on_error "Checkpoint failed"
+# Spawn off database script that does the flush
+psql -f $GLOBAL/replication/archiverFlush &
+PID=$!
 
-# There shouldn't be any backups going on; cancel just to be safe
-psql -c "select pg_stop_backup();" > /dev/null 2> /dev/null
+# That starts with a 10 second sleep.  Wait one second to confirm it should
+# have started, then prevent additional connections to the database through
+# a smart shutdown.  The one we've already connected will survive this.
+sleep 1
+pg_ctl stop -m smart -w -t 5
 
-# checkpoint again 
-psql -c "checkpoint;"
-exit_on_error "Second checkpoint failed"
+# Wait for the script to finish
+echo Waiting for archiver flush to complete:  approximately 30 seconds
+wait $PID
 
-# Give archiver time to finish processing
-sleep 20
+# Completely stop the server
+echo Stopping the server
+pg_ctl stop -m immediate -w
 
 # flush files to standby archive
 rsync -cz $PGDATA/pg_xlog/* $OTHERNODE:$ARCHIVE/
