@@ -44,9 +44,8 @@ require_pgdata
 primary_only
 require_archive
 
-# Save database log files, which might be copied over to the standby
-# Not done in current implementation
-#rsync -cav ${PGDATA}/pg_log/* ${ARCHIVE}
+# Save database log files to the standby
+rsync -cav ${PGDATA}/pg_log/* ${OTHERNODE}:pg_log/
 
 # Spawn off database script that does the flush
 psql -f $GLOBAL/replication/archiverFlush &
@@ -67,13 +66,13 @@ echo Stopping the server
 pg_ctl stop -m immediate -w
 
 # flush files to standby archive
-rsync -cz $PGDATA/pg_xlog/* $OTHERNODE:$ARCHIVE/
-exit_on_error "rsync to $OTHERNODE failed"
+rsync -cz ${PGDATA}/pg_xlog/* ${OTHERNODE}:${ARCHIVE}/
+exit_on_error "rsync to ${OTHERNODE} failed"
 
 # flush files to DR archive
-if [ -n "$DRNODE" ] ; then
-  rsync -cz $PGDATA/pg_xlog/* $DRNODE:$ARCHIVE/
-  exit_on_error "rsync to $DRNODE failed"
+if [ -n "${DRNODE}" ] ; then
+  rsync -cz ${PGDATA}/pg_xlog/* ${DRNODE}:${ARCHIVE}/
+  exit_on_error "rsync to ${DRNODE} failed"
 fi
 
 exit 0
