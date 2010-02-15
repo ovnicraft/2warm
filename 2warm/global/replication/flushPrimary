@@ -45,31 +45,67 @@ primary_only
 require_archive
 
 # Save database log files to the standby
+echo Saving primary log files to the standby
 rsync -cav ${PGDATA}/pg_log/* ${OTHERNODE}:pg_log/
 
-# Spawn off database script that does the flush
-psql -f $GLOBAL/replication/archiverFlush &
+# Run a checkpoint that will likely take a long time, just to
+# clear the buffer cache out.  Then a second one executed as
+# part of the shutdown script shouldn't take very long.
+echo Executing pre-flush checkpoint
+psql -c "CHECKPOINT;"
+
+# Spawn off database script that does the flush.  This checkpoint
+# should be fast.
+psql -c "SELECT pg_sleep(70); CHECKPOINT; SELECT pg_switch_xlog();" &
 PID=$!
 
-# That starts with a 10 second sleep.  Wait one second to confirm it should
-# have started, then prevent additional connections to the database through
-# a smart shutdown.  The one we've already connected will survive this.
-sleep 1
-pg_ctl stop -m smart -w -t 5
+# Wait five seconds to confirm it should have started, then prevent
+# additional connections to the database through a smart shutdown.
+# The one we've already connected above will survive this.
+echo Waiting for flush database process to connect
+sleep 5
 
-# Wait for the script to finish
-echo Waiting for archiver flush to complete:  approximately 30 seconds
+# Note that this whole timing might be tightened starting in PostgreSQL
+# 8.3 by using the "-t" option to pg_ctl, that doesn't exist in 8.2
+# so we're stuck assuming the default timeout of 60 seconds here.
+echo "Blocking new connections to the server (60 seconds, will report failure)"
+pg_ctl stop -m smart -w
+
+# Wait for the spawned script to finish, and then give the server another 5
+# seconds to complete the smart shutdown already requested
+echo Waiting for archiver flush to complete
 wait $PID
+sleep 5
 
-# Completely stop the server
-echo Stopping the server
-pg_ctl stop -m immediate -w
+# Completely stop the server--which might have already gone down.
+# First try the fast shutdown.
+if [ -f "$PGDATA/postmaster.pid" ] ; then
+  echo Stopping the server in fast mode
+  pg_ctl stop -m fast -w
+  if [ $? -ne 0 ] ; then
+    # If that didn't work, better to go down hard than not at all
+    echo Stopping the server in immediate mode
+    pg_ctl stop -m immediate -w
+  else
+    echo Server shutdown normally
+  fi
+else
+  echo Server shutdown normally
+fi
+
+# Final sanity check here 
+if [ -f "$PGDATA/postmaster.pid" ] ; then
+  echo ERROR:  Server appears to still be running after all possible techniques to stop it normally.
+  echo WARNING:  Copying over archives anyway, but this server has not been taken off-line properly.
+fi
 
 # flush files to standby archive
+echo Flushing archive WAL files to standby
 rsync -cz ${PGDATA}/pg_xlog/* ${OTHERNODE}:${ARCHIVE}/
-exit_on_error "rsync to ${OTHERNODE} failed"
+exit_on_error "rsync to ${OTHERNODE} failed; aborting any attempt to save to DR node as well"
 
 # flush files to DR archive
+echo Flushing archive WAL files to DR
 if [ -n "${DRNODE}" ] ; then
   rsync -cz ${PGDATA}/pg_xlog/* ${DRNODE}:${ARCHIVE}/
   exit_on_error "rsync to ${DRNODE} failed"
