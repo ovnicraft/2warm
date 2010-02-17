@@ -459,7 +459,7 @@ Monitoring and forcing archiving changes
 
 If you have made changes to the primary, and want to force them to the standby immediately rather than wait for the timeout, use the pg_switch_xlog call on the primary.  The following example shows how to check the file locations the server is currently using, force a switch to a new segment (which will then trigger archiving that new segment), and how the segments advance afterwards::
 
-  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_current_xlog_insert_location())) AS current, \
+  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_current_xlog_location())) AS current, \
   pg_xlogfile_name((SELECT pg_current_xlog_insert_location())) AS insert" 
            current          |          insert          
   --------------------------+-------------------------- 
@@ -474,7 +474,7 @@ If you have made changes to the primary, and want to force them to the standby i
    0000000100000000000000DE 
   (1 row) 
 
-  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_current_xlog_insert_location())) AS current, \
+  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_current_xlog_location())) AS current, \
   pg_xlogfile_name((SELECT pg_current_xlog_insert_location())) AS insert" 
            current          |          insert          
   --------------------------+-------------------------- 
