@@ -29,11 +29,10 @@ function find_base
 
 function config_setup
 {
-    find_base
-    # Basic directory tree
+	find_base
+	# Basic directory tree
 	GLOBAL=${PGROOT}/2warm/global/
 	LOCAL=${PGROOT}/2warm/local/
-	ARCHIVE=${PGDATA}/archive
 
 	# Lookup information about our configuration
 	OTHERNODE=`cat $LOCAL/replication/othernode`
@@ -41,6 +40,12 @@ function config_setup
 	if [ -f "${LOCAL}/replication/drnode" ] ; then
 		DRNODE=`cat $LOCAL/replication/drnode`
 	fi
+	# Load local settings
+	if [ -f "${LOCAL}/environment.sh" ] ; then
+		source ${LOCAL}/environment.sh
+	fi
+	# And finally set the archive directory (after the local settings have applied)
+	ARCHIVE=${PGDATA}/archive
 }
 
 function require_pgdata
