@@ -340,6 +340,10 @@ Your server log files will now start warning that logs are being discarded becau
   Archiving not active: ignoring pg_xlog/000000010000000C00000090. Would normally save to db2:/data/8.2/archive/000000010000000C00000090.
   2010-02-10 13:31:34 CST::@:[27885]:LOG:  archived transaction log file "000000010000000C00000090"
 
+And you can force a test like this::
+
+  psql -c "select pg_switch_xlog();"
+
 If instead you see the following::
 
   sh: ../2warm/global/replication/archiveWALFile: No such file or directory
@@ -349,7 +353,12 @@ That means that $PGDATA/../2warm is not setup correctly.
 Configure standby for recovery
 ------------------------------
 
-The standby in this pair has a very specific configuration needed before replication to it can begin, and the configStandby script creates that configuration.  Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
+The standby in this pair has a very specific configuration needed before replication to it can begin, and the configStandby script creates that configuration.  
+
+Stop and remove any existing database
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
 
   [postgres@db2]$ ps -eaf | grep postmaster
   postgres  5019     1  0 Jan28 ?        00:00:02 /usr/bin/postmaster -p 5432 -D /data/8.2/
@@ -370,6 +379,24 @@ For example, if your xlog drive for this version is /xlog/8.2, you might replace
   [postgres@db2]$ rm -rf *
   [postgres@db2]$ cd $PGDATA
   [postgres@db2]$ ln -s /xlog/8.2 pg_xlog
+
+Check the restore_command
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The 2warm/global/recovery.conf file contains the template for the restore command
+used by the database to start recovery.  The default version included with
+2warm supports PostgreSQL versions from 8.2 onward:
+
+  restore_command = '../2warm/global/replication/restoreWALFile %f %p'
+
+If you are running vesion 8.3 or later, you should update this file
+to include the "%r" feature added in that version, so it looks like this::
+
+  restore_command = '../2warm/global/replication/restoreWALFile %f %p %r'
+
+Run configStandby
+~~~~~~~~~~~~~~~~~
+
 
 configStandby will actually clean up the pg_xlog directory even if you don't in this case, but you do have to worry about the symlink creation.
 Next run the configStandby utility::
@@ -446,7 +473,7 @@ As additional activity occurs on the primary, more files should appear in this a
   -rw------- 1 postgres postgres 16777216 Feb 10 13:41 000000010000000C00000099
   -rw------- 1 postgres postgres      247 Feb 10 13:42 000000010000000C00000099.00000020.backup
 
-You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog().  Eventually you should see another segment arrive::
+You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog() after doing at least some activity.  Eventually you should see another segment arrive::
 
   [postgres@db2]$ ls -l
   total 32812
@@ -500,6 +527,9 @@ The standby will now consume new log files as they appear.  If you try to run qu
 
   postgres@d3 $ psql 
   psql: FATAL:  the database system is starting up 
+
+Starting in PostgreSQL 9.0, the Hot Standby feature does allow running queries
+against the slave.
 
 Monitoring the standby logs
 ---------------------------
