@@ -364,10 +364,19 @@ If instead you see the following::
 
 That means that $PGDATA/../2warm is not set up correctly.
 
+You can force a segment switch test like this::
+
+  psql -c "select pg_switch_xlog();"
+
 Configure standby for recovery
 ------------------------------
 
-The standby in this pair has a very specific configuration needed before replication to it can begin, and the configStandby script creates that configuration.  Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
+The standby in this pair has a very specific configuration needed before replication to it can begin, and the configStandby script creates that configuration.  
+
+Stop and remove any existing database
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
 
   [postgres@db2]$ ps -eaf | grep postmaster
   postgres  5019     1  0 Jan28 ?        00:00:02 /usr/bin/postmaster -p 5432 -D /data/8.2/
@@ -464,7 +473,7 @@ As additional activity occurs on the primary, more files should appear in this a
   -rw------- 1 postgres postgres 16777216 Feb 10 13:41 000000010000000C00000099
   -rw------- 1 postgres postgres      247 Feb 10 13:42 000000010000000C00000099.00000020.backup
 
-You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog().  Eventually you should see another segment arrive::
+You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog() after doing some additional activity.  Eventually you should see another segment arrive::
 
   [postgres@db2]$ ls -l
   total 32812
@@ -518,6 +527,8 @@ The standby will now consume new log files as they appear.  If you try to run qu
 
   postgres@d3 $ psql 
   psql: FATAL:  the database system is starting up 
+
+Starting in PostgreSQL 9.0, the Hot Standby feature does allow running queries against the slave.
 
 Operations
 ++++++++++
