@@ -70,7 +70,7 @@ The scripts used generally follows one of the paths outlined on this internal di
 
 .. image:: images/internal.png
    :width: 100%
-   :scale: 75
+   :scale: 50
 
 These scripts are all in the 2warm/global/replication directory.
 
@@ -103,13 +103,11 @@ In the simple two-node case, the transitions possible are fairly straightforward
 
 .. image:: images/two-node.png
    :width: 100%
-   :scale: 75
 
 If a third disaster recovery node is added, there are several more possible paths involved:
 
 .. image:: images/dr-node.png
    :width: 100%
-   :scale: 75
 
 Installation
 ++++++++++++
