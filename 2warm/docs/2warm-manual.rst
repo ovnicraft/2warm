@@ -9,7 +9,7 @@ Introduction
 ++++++++++++
 
 PostgreSQL has shipped with an integrated standby features
-since its version 8.1.  This allows creating a master/standby
+since its version 8.2.  This allows creating a master/standby
 pair of nodes, where the standby regularly receives a log of
 database updates from the master.  With the currently common
 warm-standby configuration, this allows a high-availability 
@@ -715,16 +715,23 @@ Appendix
 History of Built-in PostgreSQL Replication Features
 ===================================================
 
+PostgreSQL 8.0
+--------------
+
+PostgreSQL 8.0 introduced Point-in-time recovery (PITR) to the database.  This allows rebuilding a database using a “base backup” of its current state, along with a series of write-ahead log (WAL) files that contain all of the changes to the data since then.  “Replay” of the information in those WAL files can take as long or even longer than the original data did to accumulate however.  By saving those files to another system, this allowed simple replication of a database to a standby node.
+But while many clients can make changes to the database at once, there's only one client doing the replay recovery.  Since that recovery didn't start until there was a fail-over to the standby system that made it the new primary, a failover of a standby that had been up for hours could correspondingly take hours to finish—during which the database server is down.
+
 PostgreSQL 8.1
 --------------
 
-PostgreSQL 8.1 introduced Point-in-time recovery (PITR) to the database.  This allows rebuilding a database using a “base backup” of its current state, along with a series of write-ahead log (WAL) files that contain all of the changes to the data since then.  “Replay” of the information in those WAL files can take as long or even longer than the original data did to accumulate however.  By saving those files to another system, this allowed simple replication of a database to a standby node.
-But while many clients can make changes to the database at once, there's only one client doing the replay recovery.  Since that recovery didn't start until there was a fail-over to the standby system that made it the new primary, a failover of a standby that had been up for hours could correspondingly take hours to finish—during which the database server is down.
+PostgreSQL 8.1 introduced further changes to Point-in-time recovery (PITR). 8.1 was released soon after 8.0 and no substantial changes were made for replication.
 
 PostgreSQL 8.2
 --------------
 
-PostgreSQL 8.2 improved this situation by introducing the concept of a warm standby.  Rather than wait until the database was being activated, warm standbys continuously poll for new incoming WAL segments, and immediately apply them as they appear.  That makes the replication closer to real-time, and vastly decreases the expected fail-over time in the case of a failure on the primary.
+PostgreSQL 8.2 improved introduced the concept of log shipping replication to create a warm standby database.  Rather than wait until the database was activated, warm standbys continuously poll for new incoming WAL segments, and immediately apply them as they appear.  That makes the replication closer to real-time, and vastly decreases the expected fail-over time in the case of a failure on the primary.
+
+The key additional features here are restartable recovery and time-based log switching. Restartable recovery allows the standby to be shutdown and then restarted again without needing to return to a base backup. Without this 8.0 and 8.1 were very problematic in production use. Time-based log shipping allows the server to switch to a new logfile every archive_timeout seconds. This puts an upper bound on the amount of time changes take to propogate to the standby.
 
 The warm standby is far from being ready to go after a basic PostgreSQL install though.  One of the key parts of making this system work well is having a program to fetch the new segments and apply them to the secondary.  No such program is provided with PostgreSQL 8.2.  2ndQuadrant developed a reference implementation named pg_standby that handles this particular task.
 
@@ -743,4 +750,4 @@ PostgreSQL 9.0
 
 The upcoming PostgreSQL 9.0 integrates real-time streaming replication, rather than just copying a full WAL file at a time, into an easier to setup form than was ever available before.  And the Hot Standby feature, primarily developed by 2ndQuadrant, allows executing queries against standby nodes.
 
-There is still some scripting required in order to manage these new features in 9.0.  Currently, the 2warm package has early support for 9.0 and provides those scripts in a way compatible with the Hot Standby feature, but is not yet fully integrated with the Streaming Replication feature.  The expectation is that it will be upgraded to do so before 9.0 is released.  This should result in a fairly smooth transition path if you are already using the 2warm package, but eventually upgrade to a PostgreSQL version with better replication features.
+There is still some scripting required in order to manage these new features in 9.0.  Currently, the 2warm package does not support 9.0, but the expectation is that it will be upgraded to do so before 9.0 is released.  This should result in a fairly smooth transition path if you are already using the 2warm package but eventually upgrade to a version with better replication features.
