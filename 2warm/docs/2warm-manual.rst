@@ -208,11 +208,13 @@ Once pg_config works and you have all these packages, compile and install pg_sta
   [postgres@db1]$ ./build 
   ~/2warm/global/replication ~/2warm/pg_standby
   ~/2warm/pg_standby
-  gcc -O2 -g -pipe -Wall -Wp,-D_FORTIFY_SOURCE=2 -fexceptions -fstack-protector --param=ssp-buffer-size=4
-  -m64 -mtune=generic -I/usr/include/et -Wall -Wmissing-prototypes -Wpointer-arith -Winline 
-  -Wdeclaration-after-statement -Wendif-labels -fno-strict-aliasing -fwrapv pg_standby.o  -L/usr/lib64 
-  -L/usr/lib64 -lpgport -lpam -lssl -lcrypto -lkrb5 -lz -lreadline -ltermcap -lcrypt -ldl -lm  
-  -o pg_standby
+  gcc -O2 -g -pipe -Wall -Wp,-D_FORTIFY_SOURCE=2 -fexceptions 
+  -fstack-protector --param=ssp-buffer-size=4
+  -m64 -mtune=generic -I/usr/include/et -Wall -Wmissing-prototypes 
+  -Wpointer-arith -Winline 
+  -Wdeclaration-after-statement -Wendif-labels -fno-strict-aliasing 
+  -fwrapv pg_standby.o  -L/usr/lib64 -L/usr/lib64 -lpgport -lpam -lssl
+  -lcrypto -lkrb5 -lz -lreadline -ltermcap -lcrypt -ldl -lm  -o pg_standby
   pg_standby installed to /var/lib/pgsql/2warm/global/replication
 
 Set up trusted copy between postgres accounts
@@ -356,7 +358,8 @@ Your server log files will now start warning that logs are being discarded becau
 
   Archiving not active: ignoring pg_xlog/000000010000000C00000090. 
   Would normally save to db2:/data/8.2/archive/000000010000000C00000090.
-  2010-02-10 13:31:34 CST::@:[27885]:LOG:  archived transaction log file "000000010000000C00000090"
+  2010-02-10 13:31:34 CST::@:[27885]:LOG:  archived transaction log file
+  "000000010000000C00000090"
 
 If instead you see the following::
 
@@ -379,15 +382,17 @@ Stop and remove any existing database
 Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
 
   [postgres@db2]$ ps -eaf | grep postmaster
-  postgres  5019     1  0 Jan28 ?        00:00:02 /usr/bin/postmaster -p 5432 -D /data/8.2/
+  postgres  5019     1  0 Jan28 ?        00:00:02 /usr/bin/postmaster
+  -p 5432 -D /data/8.2/
   postgres  5152  5100  0 13:11 pts/1    00:00:00 grep postmaster
   [postgres@db2]$ kill 5019
   [postgres@db2]$ ps -eaf | grep postmaster
   postgres  5154  5100  0 13:11 pts/1    00:00:00 grep postmaster
   [postgres@db2]$ cd $PGDATA
   [postgres@db2]$ ls
-  base  global  pg_clog  pg_hba.conf  pg_ident.conf  pg_log  pg_multixact  pg_subtrans  
-  pg_tblspc  pg_twophase  PG_VERSION  pg_xlog  postgresql.conf  postmaster.opts
+  base  global  pg_clog  pg_hba.conf  pg_ident.conf  pg_log  pg_multixact
+  pg_subtrans pg_tblspc  pg_twophase  PG_VERSION  pg_xlog  postgresql.conf
+  postmaster.opts
   [postgres@db2]$ rm -rf *
 
 Note that if you had a symlink for pg_xlog, you need to make sure that's put back again, and that it's contents are cleared out as well because the above “rm -rf” will not follow into it.
@@ -407,7 +412,7 @@ Next run the configStandby utility::
   psql: could not connect to server: No such file or directory
     Is the server running locally and accepting
     connections on Unix domain socket "/tmp/.s.PGSQL.5432"?
-  Standby system is ready, shipped archives will appear in /data/8.2//archive
+  Standby system is ready, shipped archives will appear in /data/8.2/archive
 
 The psql error message here is normal—that comes from the program confirming you're not trying to run this script on a server with a working database on it, which would cause data loss.  It only proceeds if that psql attempt fails.
 
@@ -464,29 +469,36 @@ You should now have files being shipped to the standby, but not actually being p
   [postgres@db2]$ cd $PGDATA/archive
   [postgres@db2]$ ls -l *.backup
 
-  -rw------- 1 postgres postgres 247 Feb 10 13:42 000000010000000C00000099.00000020.backup
+  -rw------- 1 postgres postgres 247 Feb 10 13:42 
+  000000010000000C00000099.00000020.backup
 
 As additional activity occurs on the primary, more files should appear in this area, even if you don't start the standby server yet.  Here's an example::
 
   [postgres@db2]$ ls -l
   total 16408
-  -rw------- 1 postgres postgres 16777216 Feb 10 13:41 000000010000000C00000099
-  -rw------- 1 postgres postgres      247 Feb 10 13:42 000000010000000C00000099.00000020.backup
+  -rw------- 1 postgres postgres 16777216 Feb 10 13:41
+  000000010000000C00000099
+  -rw------- 1 postgres postgres      247 Feb 10 13:42
+  000000010000000C00000099.00000020.backup
 
 You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog() after doing some additional activity.  Eventually you should see another segment arrive::
 
   [postgres@db2]$ ls -l
   total 32812
-  -rw------- 1 postgres postgres 16777216 Feb 10 13:41 000000010000000C00000099
-  -rw------- 1 postgres postgres      247 Feb 10 13:42 000000010000000C00000099.00000020.backup
-  -rw------- 1 postgres postgres 16777216 Feb 10 13:46 000000010000000C0000009A
+  -rw------- 1 postgres postgres 16777216 Feb 10 13:41
+  000000010000000C00000099
+  -rw------- 1 postgres postgres      247 Feb 10 13:42
+  000000010000000C00000099.00000020.backup
+  -rw------- 1 postgres postgres 16777216 Feb 10 13:46
+  000000010000000C0000009A
 
 Monitor and force archiving changes
 -----------------------------------
 
 If you have made changes to the primary, and want to force them to the standby immediately rather than wait for the timeout, use the pg_switch_xlog call on the primary.  The following example shows how to check the file locations the server is currently using, force a switch to a new segment (which will then trigger archiving that new segment), and how the segments advance afterwards::
 
-  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_current_xlog_location())) AS current, \
+  postgres@db1 $ psql -c "SELECT pg_xlogfile_name(( \
+  SELECT pg_current_xlog_location())) AS current, \
   pg_xlogfile_name((SELECT pg_current_xlog_insert_location())) AS insert" 
            current          |          insert          
   --------------------------+-------------------------- 
@@ -495,13 +507,15 @@ If you have made changes to the primary, and want to force them to the standby i
 
   postgres@db1 $ psql -c "checkpoint" 
   CHECKPOINT 
-  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_switch_xlog())) AS switched_from"; 
+  postgres@db1 $ psql -c "SELECT pg_xlogfile_name(( \
+  SELECT pg_switch_xlog())) AS switched_from"; 
         switched_from       
   -------------------------- 
    0000000100000000000000DE 
   (1 row) 
 
-  postgres@db1 $ psql -c "SELECT pg_xlogfile_name((SELECT pg_current_xlog_location())) AS current, \
+  postgres@db1 $ psql -c "SELECT pg_xlogfile_name(( \
+  SELECT pg_current_xlog_location())) AS current, \
   pg_xlogfile_name((SELECT pg_current_xlog_insert_location())) AS insert" 
            current          |          insert          
   --------------------------+-------------------------- 
@@ -538,9 +552,11 @@ Monitor the standby logs
 
 Information about the restore_command's activity is all written to the standard database log files.  You will see a few warning messages about invalid files during the initial recovery initialization::
 
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  database system was interrupted at 2010-02-10 13:39:20 CST
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  database system was interrupted
+  at 2010-02-10 13:39:20 CST
   2010-02-10 13:50:15 CST::@:[5383]:LOG:  starting archive recovery
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  restore_command = "../2warm/global/replication/restoreWALFile %f %p"
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  restore_command =
+  "../2warm/global/replication/restoreWALFile %f %p"
   pg_standby: invalid NEXTWALFILENAME
   Try "pg_standby --help" for more information.
   ERROR: pg_standby returned error 2
@@ -552,11 +568,15 @@ These are all normal.
 
 Afterwards, you should begin seeing the archive log files after the backup was completed being processed.  The first thing you'll see checked is the last segment mentioned in the backup::
 
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  restored log file "000000010000000C00000099" from archive
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  checkpoint record is at C/99000020
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  redo record is at C/99000020; undo record is at 0/0; shutdown FALSE
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  next transaction ID: 0/333404; next OID: 48242134
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  next MultiXactId: 1; next MultiXactOffset: 0
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  restored log file 
+  "000000010000000C00000099" from archive
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  checkpoint record is atC/99000020
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  redo record is at C/99000020; 
+  undo record is at 0/0; shutdown FALSE
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  next transaction ID: 0/333404;
+  next OID: 48242134
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  next MultiXactId: 1; next
+  MultiXactOffset: 0
   2010-02-10 13:50:15 CST::@:[5383]:LOG:  automatic recovery in progress
   2010-02-10 13:50:15 CST::@:[5383]:LOG:  redo starts at C/99000070
 
@@ -568,10 +588,12 @@ And then regular log files will be processed with logged entries like this::
   Restoring to            : pg_xlog/RECOVERYXLOG
   Sleep interval          : 30 seconds
   Max wait interval       : 0 forever
-  Command for restore     : cp "/data/8.2//archive/000000010000000C0000009A" "pg_xlog/RECOVERYXLOG"
+  Command for restore     : cp "/data/8.2//archive/000000010000000C0000009A"
+  "pg_xlog/RECOVERYXLOG"
   Keep archive history    : 000000010000000C0000003A and later
   running restore         : OK
-  2010-02-10 13:50:15 CST::@:[5383]:LOG:  restored log file "000000010000000C0000009A" from archive
+  2010-02-10 13:50:15 CST::@:[5383]:LOG:  restored log file 
+  "000000010000000C0000009A" from archive
 
 Test the new installation
 =========================
@@ -668,7 +690,8 @@ To do a completely clean switchover from a primary you want to take down (perhap
   CHECKPOINT 
   Waiting for flush database process to connect 
   Blocking new connections to the server (60 seconds, will report failure) 
-  waiting for server to shut down............................................................... failed 
+  waiting for server to shut down.......................................
+  ........................ failed 
   pg_ctl: server does not shut down 
   Waiting for archiver flush to complete 
    pg_switch_xlog 
