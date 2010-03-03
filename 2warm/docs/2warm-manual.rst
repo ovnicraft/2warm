@@ -1,14 +1,41 @@
 .. image:: images/2ndQuadrant-logo.png
+   :width: 100%
 
 ==============================================
 PostgreSQL Warm-Standby Replication with 2warm
 ==============================================
 
 Introduction
-============
+++++++++++++
+
+PostgreSQL has shipped with an integrated standby features
+since its version 8.1.  This allows creating a master/standby
+pair of nodes, where the standby regularly receives a log of
+database updates from the master.  With the currently common
+warm-standby configuration, this allows a high-availability 
+setup where, if the master is lost, the slave can be brought up
+quickly to replace it.
+
+While the main components of the feature are included with
+PostgreSQL, the user is expected to provide many scripts to
+handle tasks such as copying files between master and standby.  These
+is considerable scripting and integration required before a
+basic PostgreSQL server pair can be made into a warm standby set.
+
+2warm makes this easy and robust.  It provides scripts to accomplish
+all of the necessary steps in the most common configuration, where ssh
+is used as the way to communicate between the master and standby.  It
+also provides a set of management tools for easily setting up both
+sides of a warm standby pair, and dealing with state transitions
+as nodes are brought up, are taken down, or fail.  In addition,
+2warm allows adding a 3rd server as a disaster recovery node,
+which is not neessarily run as a warm standby but instead just
+receives a copy of all activity.  This introduces the potential to
+recover not only from system failures, but from DBA mistakes
+such as accidentally erased data.
 
 Terminology
------------
+===========
 
 The standard introduction to the technology behind the PostgreSQL warm standby system is the official documentation.  The version of warm standby that ships with 8.4 has the most complete such documentation:  http://www.postgresql.org/docs/8.4/static/backup.html
 
@@ -23,39 +50,6 @@ Some common terms used in this area, some of which are specific to this 2warm pa
 * Standby:  A system with a complete  base backup and a stream of file-based logs shipped to it can be a standby:  a server with exactly the same data as the original.  A standby is kept up to date as enough new transactions appear (or time passes) and WAL files are shipped to it.  A warm standby continuously applies new WAL files as they appear.
 * Fail-over:  Taking the standby out of recovery mode and turning it into an active server, using what's called a “trigger” file.  In intentional failover situations, you can stop the primary first and make sure all its data has been flushed.  In a true failure of the primary situation, this will not be possible, and some recent transactions (the ones not yet shipped to the standby) committed on the primary may not be available on the standby that's not promoted to being a primary.
 * Disaster Recovery Relay:  It is also possible to “relay” the files the standby receives to a third system (or potentially even more, although this is not directly supported by the standard 2warm scripts).  Those systems then also become useful disaster recovery candidates if both primary and secondary systems are lost.
-
-History of Built-in PostgreSQL Replication Features
-===================================================
-
-8.1
----
-
-PostgreSQL 8.1 introduced Point-in-time recovery (PITR) to the database.  This allows rebuilding a database using a “base backup” of its current state, along with a series of write-ahead log (WAL) files that contain all of the changes to the data since then.  “Replay” of the information in those WAL files can take as long or even longer than the original data did to accumulate however.  By saving those files to another system, this allowed simple replication of a database to a standby node.
-But while many clients can make changes to the database at once, there's only one client doing the replay recovery.  Since that recovery didn't start until there was a fail-over to the standby system that made it the new primary, a failover of a standby that had been up for hours could correspondingly take hours to finish—during which the database server is down.
-
-8.2
----
-
-PostgreSQL 8.2 improved this situation by introducing the concept of a warm standby.  Rather than wait until the database was being activated, warm standbys continuously poll for new incoming WAL segments, and immediately apply them as they appear.  That makes the replication closer to real-time, and vastly decreases the expected fail-over time in the case of a failure on the primary.
-
-The warm standby is far from being ready to go after a basic PostgreSQL install though.  One of the key parts of making this system work well is having a program to fetch the new segments and apply them to the secondary.  No such program is provided with PostgreSQL 8.2.  2ndQuadrant developed a reference implementation named pg_standby that handles this particular task.
-
-8.3
----
-
-PostgreSQL 8.3 ships with pg_standby as one of its contrib modules you can optionally use.  It also adds the useful new feature “%r” feature to the archive_command allowing better pruning of old WAL files from the system.  In 8.2, you had to guess how many still needed, which inevitably resulted in wasted disk space from the overestimation required for safety.
-
-8.4
----
-
-8.4 adds the recovery_end_command option, typically used to clean up the trigger file when coming out of recovery.
-
-9.0
----
-
-The upcoming PostgreSQL 9.0 integrates real-time streaming replication, rather than just copying a full WAL file at a time, into an easier to setup form than was ever available before.  And the Hot Standby feature, primarily developed by 2ndQuadrant, allows executing queries against standby nodes.
-
-There is still some scripting required in order to manage these new features in 9.0.  Currently, the 2warm package does not support 9.0, but the expectation is that it will be upgraded to do so before 9.0 is released.  This should result in a fairly smooth transition path if you are already using the 2warm package but eventually upgrade to a version with better replication features.
 
 Configuration files
 ===================
@@ -75,6 +69,8 @@ Available Scripts and Commands
 The scripts used generally follows one of the paths outlined on this internal diagram:
 
 .. image:: images/internal.png
+   :width: 100%
+   :scale: 75
 
 These scripts are all in the 2warm/global/replication directory.
 
@@ -106,14 +102,20 @@ Architecture Diagrams
 In the simple two-node case, the transitions possible are fairly straightforward:
 
 .. image:: images/two-node.png
+   :width: 100%
+   :scale: 75
 
 If a third disaster recovery node is added, there are several more possible paths involved:
 
 .. image:: images/dr-node.png
+   :width: 100%
+   :scale: 75
 
+Installation
+++++++++++++
 
-Initial Configuration of 2warm
-==============================
+Configure 2warm
+===============
 
 Install 2warm package
 ---------------------
@@ -164,6 +166,7 @@ Save master postgresql.conf
 
 There is a sample postgresql.conf file distributed with 2warm in 2warm/local that shows how to correctly setup the archive_command needed for 2warm to work::
 
+  archive_mode = on
   archive_command = '../2warm/global/replication/archiveWALFile %p %f'
 
 You may want to adjust archive_timeout and checkpoint_timeout as well.
@@ -171,6 +174,20 @@ You may want to adjust archive_timeout and checkpoint_timeout as well.
 The distribution scripts expect that the likely identical postgresql.conf on each system is saved into the 2warm/local directory, and that copy will be used to overwrite the system one in some situations.  Once you've made the appropriate changes to add archiving to your copy in $PGDATA, save it like this::
 
   [postgres@db1]$ cp $PGDATA/postgresql.conf 2warm/local/postgresql.conf 
+
+Check the restore_command
+-------------------------
+
+The 2warm/global/recovery.conf file contains the template for the restore command
+used by the database to start recovery.  The default version included with
+2warm supports PostgreSQL versions from 8.2 onward::
+
+  restore_command = '../2warm/global/replication/restoreWALFile %f %p'
+
+If you are running vesion 8.3 or later, you should update this file
+to include the "%r" feature added in that version, so it looks like this::
+
+  restore_command = '../2warm/global/replication/restoreWALFile %f %p %r'
 
 Compile pg_standby
 ------------------
@@ -198,8 +215,8 @@ Once pg_config works and you have all these packages, compile and install pg_sta
   -o pg_standby
   pg_standby installed to /var/lib/pgsql/2warm/global/replication
 
-Setup trusted copy between postgres accounts
---------------------------------------------
+Set up trusted copy between postgres accounts
+---------------------------------------------
 
 WAL segments are copied between nodes using the rsync program running over ssh.  For this to work, the postgres accounts on each system need to be able to access files on their partner node without a password.  
 
@@ -235,8 +252,8 @@ Now test that ssh in both directions works (you may have to accept some new know
   [postgres@db2]$ ssh postgres@db1
   [postgres@db1]$ ssh postgres@db2
 
-Setup 2warm scripts across all nodes
-------------------------------------
+Set up 2warm scripts across all nodes
+-------------------------------------
 
 Returning to the system with 2warm already installed on it, next you need to configure what nodes it expects to talk to.  These files are in the 2warm/local/replication directory.  Here's an example that sets up to talk to a partner but not disaster recovery node::
 
@@ -337,28 +354,20 @@ Now you want the archive_command to be working on the master node, even though i
 
 Your server log files will now start warning that logs are being discarded because archiving is not fully active yet, which is expected at this point.  The messages look like this::
 
-  Archiving not active: ignoring pg_xlog/000000010000000C00000090. Would normally save to db2:/data/8.2/archive/000000010000000C00000090.
+  Archiving not active: ignoring pg_xlog/000000010000000C00000090. 
+  Would normally save to db2:/data/8.2/archive/000000010000000C00000090.
   2010-02-10 13:31:34 CST::@:[27885]:LOG:  archived transaction log file "000000010000000C00000090"
-
-And you can force a test like this::
-
-  psql -c "select pg_switch_xlog();"
 
 If instead you see the following::
 
   sh: ../2warm/global/replication/archiveWALFile: No such file or directory
 
-That means that $PGDATA/../2warm is not setup correctly.
+That means that $PGDATA/../2warm is not set up correctly.
 
 Configure standby for recovery
 ------------------------------
 
-The standby in this pair has a very specific configuration needed before replication to it can begin, and the configStandby script creates that configuration.  
-
-Stop and remove any existing database
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
+The standby in this pair has a very specific configuration needed before replication to it can begin, and the configStandby script creates that configuration.  Login to the standby and confirm there's no server already running there.  If you find a postgres process, or data already in $PGDATA, you'll need to stop the server and wipe all of that out::
 
   [postgres@db2]$ ps -eaf | grep postmaster
   postgres  5019     1  0 Jan28 ?        00:00:02 /usr/bin/postmaster -p 5432 -D /data/8.2/
@@ -379,24 +388,6 @@ For example, if your xlog drive for this version is /xlog/8.2, you might replace
   [postgres@db2]$ rm -rf *
   [postgres@db2]$ cd $PGDATA
   [postgres@db2]$ ln -s /xlog/8.2 pg_xlog
-
-Check the restore_command
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The 2warm/global/recovery.conf file contains the template for the restore command
-used by the database to start recovery.  The default version included with
-2warm supports PostgreSQL versions from 8.2 onward:
-
-  restore_command = '../2warm/global/replication/restoreWALFile %f %p'
-
-If you are running vesion 8.3 or later, you should update this file
-to include the "%r" feature added in that version, so it looks like this::
-
-  restore_command = '../2warm/global/replication/restoreWALFile %f %p %r'
-
-Run configStandby
-~~~~~~~~~~~~~~~~~
-
 
 configStandby will actually clean up the pg_xlog directory even if you don't in this case, but you do have to worry about the symlink creation.
 Next run the configStandby utility::
@@ -473,7 +464,7 @@ As additional activity occurs on the primary, more files should appear in this a
   -rw------- 1 postgres postgres 16777216 Feb 10 13:41 000000010000000C00000099
   -rw------- 1 postgres postgres      247 Feb 10 13:42 000000010000000C00000099.00000020.backup
 
-You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog() after doing at least some activity.  Eventually you should see another segment arrive::
+You can pause for another file to transfer, or force an xlog swith using pg_switch_xlog().  Eventually you should see another segment arrive::
 
   [postgres@db2]$ ls -l
   total 32812
@@ -481,8 +472,8 @@ You can pause for another file to transfer, or force an xlog swith using pg_swit
   -rw------- 1 postgres postgres      247 Feb 10 13:42 000000010000000C00000099.00000020.backup
   -rw------- 1 postgres postgres 16777216 Feb 10 13:46 000000010000000C0000009A
 
-Monitoring and forcing archiving changes
------------------------------------------
+Monitor and force archiving changes
+-----------------------------------
 
 If you have made changes to the primary, and want to force them to the standby immediately rather than wait for the timeout, use the pg_switch_xlog call on the primary.  The following example shows how to check the file locations the server is currently using, force a switch to a new segment (which will then trigger archiving that new segment), and how the segments advance afterwards::
 
@@ -513,7 +504,7 @@ Note that if there hasn't been any activity on the primary since the last xlog s
 Start standby in recovery mode
 ------------------------------
 
-In order to make the standby warm, so it applies new files as they show up, you start the server on the standby normally.  The existing of the recovery.conf file that configStandy installed for you will keep it in recovery mode::
+In order to make the standby warm, so that it applies new files as they show up, you start the server on the standby normally.  The existing of the recovery.conf file that configStandy installed for you will keep it in recovery mode::
 
   [postgres@db2]$ cat $PGDATA/recovery.conf
   restore_command = '../2warm/global/replication/restoreWALFile %f %p'
@@ -528,11 +519,11 @@ The standby will now consume new log files as they appear.  If you try to run qu
   postgres@d3 $ psql 
   psql: FATAL:  the database system is starting up 
 
-Starting in PostgreSQL 9.0, the Hot Standby feature does allow running queries
-against the slave.
+Operations
+++++++++++
 
-Monitoring the standby logs
----------------------------
+Monitor the standby logs
+========================
 
 Information about the restore_command's activity is all written to the standard database log files.  You will see a few warning messages about invalid files during the initial recovery initialization::
 
@@ -571,13 +562,39 @@ And then regular log files will be processed with logged entries like this::
   running restore         : OK
   2010-02-10 13:50:15 CST::@:[5383]:LOG:  restored log file "000000010000000C0000009A" from archive
 
-Setup optional disaster recovery node and relay system
-------------------------------------------------------
+Test the new installation
+=========================
+
+See the section Change Node States for more information.
+
+Switchover
+----------
+
+* db1: flushPrimary
+* db2:  triggerStandby
+
+Switchback
+----------
+
+* db1: Clear $PGDATA; configureStandby
+* db2: copyToStandby
+* db1: pg_ctl start
+* db2: flushPrimary
+* db1: triggerStandby
+
+Failover
+--------
+
+* db1: kill database server abruptly (pg_ctl stop -m immediate)
+* db2:  triggerStandby
+
+Disaster Recovery
+-----------------
 
 [Example to be written]
 
-Changing Node States
-====================
+Change Node States
+==================
 
 Failover: Trigger standby
 -------------------------
@@ -654,31 +671,44 @@ To do a completely clean switchover from a primary you want to take down (perhap
 
 Once this is done, the standby can be triggered in the same way as the Failover case described above.
 
-Testing of a new installation
-=============================
-
-Switchover
-----------
-
-* db1: flushPrimary
-* db2:  triggerStandby
-
-Switchback
-----------
-
-* db1: Clear $PGDATA; configureStandby
-* db2: copyToStandby
-* db1: pg_ctl start
-* db2: flushPrimary
-* db1: triggerStandby
-
-Failover
---------
-
-* db1: kill database server abruptly (pg_ctl stop -m immediate)
-* db2:  triggerStandby
-
-Disaster Recovery
------------------
+Set up optional disaster recovery node and relay system
+=======================================================
 
 [Example to be written]
+
+
+Appendix
+++++++++
+
+History of Built-in PostgreSQL Replication Features
+===================================================
+
+PostgreSQL 8.1
+--------------
+
+PostgreSQL 8.1 introduced Point-in-time recovery (PITR) to the database.  This allows rebuilding a database using a “base backup” of its current state, along with a series of write-ahead log (WAL) files that contain all of the changes to the data since then.  “Replay” of the information in those WAL files can take as long or even longer than the original data did to accumulate however.  By saving those files to another system, this allowed simple replication of a database to a standby node.
+But while many clients can make changes to the database at once, there's only one client doing the replay recovery.  Since that recovery didn't start until there was a fail-over to the standby system that made it the new primary, a failover of a standby that had been up for hours could correspondingly take hours to finish—during which the database server is down.
+
+PostgreSQL 8.2
+--------------
+
+PostgreSQL 8.2 improved this situation by introducing the concept of a warm standby.  Rather than wait until the database was being activated, warm standbys continuously poll for new incoming WAL segments, and immediately apply them as they appear.  That makes the replication closer to real-time, and vastly decreases the expected fail-over time in the case of a failure on the primary.
+
+The warm standby is far from being ready to go after a basic PostgreSQL install though.  One of the key parts of making this system work well is having a program to fetch the new segments and apply them to the secondary.  No such program is provided with PostgreSQL 8.2.  2ndQuadrant developed a reference implementation named pg_standby that handles this particular task.
+
+PostgreSQL 8.3
+--------------
+
+PostgreSQL 8.3 ships with pg_standby as one of its contrib modules you can optionally use.  It also adds the useful new feature “%r” feature to the archive_command allowing better pruning of old WAL files from the system.  In 8.2, you had to guess how many still needed, which inevitably resulted in wasted disk space from the overestimation required for safety.
+
+PostgreSQL 8.4
+--------------
+
+8.4 adds the recovery_end_command option, typically used to clean up the trigger file when coming out of recovery.
+
+PostgreSQL 9.0
+--------------
+
+The upcoming PostgreSQL 9.0 integrates real-time streaming replication, rather than just copying a full WAL file at a time, into an easier to setup form than was ever available before.  And the Hot Standby feature, primarily developed by 2ndQuadrant, allows executing queries against standby nodes.
+
+There is still some scripting required in order to manage these new features in 9.0.  Currently, the 2warm package has early support for 9.0 and provides those scripts in a way compatible with the Hot Standby feature, but is not yet fully integrated with the Streaming Replication feature.  The expectation is that it will be upgraded to do so before 9.0 is released.  This should result in a fairly smooth transition path if you are already using the 2warm package, but eventually upgrade to a PostgreSQL version with better replication features.
