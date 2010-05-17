@@ -42,7 +42,11 @@ source ${CONFIGSCRIPT}
 require_archive
 
 # restore file if it exists
-$GLOBAL/replication/pg_standby -c -d -k 96 -r 1 -s 30 -w 0 -t trigger $ARCHIVE $1 $2
+# PostgreSQL 8.2
+#$GLOBAL/replication/pg_standby -c -d -k 96 -r 1 -s 30 -w 0 -t trigger $ARCHIVE $1 $2
+# PostgreSQL 8.3 and 8.4
+$GLOBAL/replication/pg_standby -c -d -r 1 -s 30 -w 0 -t trigger $ARCHIVE $1 $2 $3
+# TODO: in case of error, we need to notify immediately the DBA (nagios?)
 exit_on_error "pg_standby returned error $?"
 
 exit 0
