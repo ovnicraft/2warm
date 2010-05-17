@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # triggerStandby
-# Copyright (c) 2ndQuadrant, 2009
+# Copyright (c) 2ndQuadrant, 2009-2010
 #
 # Use triggerStandby to initiate "smart" failover,
 # which will wait until all WAL files are consumed

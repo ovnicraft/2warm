@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # flushPrimary
-# Copyright (c) 2ndQuadrant, 2009
+# Copyright (c) 2ndQuadrant, 2009-2010
 #
 # First part of a clean switchover from Primary to Standby
 # Next step is to run triggerStandby on Standby node
