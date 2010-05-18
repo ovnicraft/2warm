@@ -1,0 +1,48 @@
+#!/usr/bin/perl -w
+use strict;
+
+# copyToStandby
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Can/will take considerable amount of time
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_pgdata;
+primary_only;
+
+print "Copying ".$cfg{'PGDATA'}." to ".$cfg{'OTHERNODE'};
+print `date`;
+
+# save config
+system("cp ".$cfg{'PGDATA'}."/postgresql.conf ".$cfg{'LOCAL'}."/postgresql.conf") || die "Unable to update postgresql.conf";
+
+# ensure we are actively archiving BEFORE we run pg_start_backup()
+system("touch ".$cfg{'PGDATA'}."/../2warm/local/replication/archiving_active") || die "Unable to start archiving";
+
+# issue a log switch just to ensure we are definitely archiving
+system("psql -t -c \"select 'archiving_active written at '||pg_switch_xlog()\"") || die "Switching xlog file files";
+
+# start backup
+system("psql -t -c \"select 'Starting online backup at WAL file '|| pg_xlogfile_name(pg_start_backup('base_backup'));\"") || die "pg_start_backup failed";
+
+# make backup, no compression
+system("time rsync -cva --inplace --exclude=*pg_xlog* ".$cfg{'PGDATA'}." ".$cfg{'OTHERNODE'}.":".$cfg{'PGDATA'}) || die "rsync backup failed";
+
+# stop backup
+system("psql -t -c \"select 'Stopping online backup at WAL file ' ||pg_xlogfile_name(pg_stop_backup());\"") || die "pg_stop_backup failed";
+
+exit(0);

@@ -1,0 +1,44 @@
+#!/usr/bin/perl -w
+use strict;
+
+# configStandby
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Copies in required config files into data directory
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_pgdata;
+exit_if_primary;
+require_archive;
+
+# Copy in files to configure Standby
+system "cp ".$cfg{'LOCAL'}."/postgresql.conf ".$cfg('PGDATA'}."/postgresql.conf" || die "Could not copy".$cfg{'LOCAL'}."/postgresql.conf to ".$cfg('PGDATA'}."/postgresql.conf";
+
+system "cp ".$cfg{'GLOBAL'}."/recovery.conf ".$cfg{'PGDATA'}."/recovery.conf" || die "Could not copy ".$cfg{'GLOBAL'}."/recovery.conf to ".$cfg{'PGDATA'}."/recovery.conf";
+
+# Ensure that Standby won't activate immediately on new Primary
+system "rm -f ".$cfg{'PGDATA'}."/trigger";
+
+# Erase contents of pg_xlog but not the directory, as not to break
+# symlink'd pg_xlog setups
+
+system "rm -rf ".$cfg{'PGDATA'}."/pg_xlog/*";
+system "mkdir -p ".$cfg{'PGDATA'}."/pg_xlog/archive_status";
+
+print "Standby system is ready, shipped archives will appear in ".$cfg{'ARCHIVE'};
+
+exit(0)

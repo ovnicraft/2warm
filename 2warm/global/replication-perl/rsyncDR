@@ -1,0 +1,44 @@
+#!/usr/bin/perl -w
+use strict;
+
+# rsyncDR 
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Runs in cron - does nothing on Primary
+# WAL file relay from Standby to DR node.
+#
+# To add script to cron you must
+# 1) Add postgres to /etc/cron.allow
+# 2) crontab -e
+#      */5 * * * * /var/lib/pgsql/2warm/global/replication/rsyncDR
+#
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_dr;
+standby_only;
+
+# Can I logon to Postgres? If I can then I must be Primary, so exit
+system "psql -c \"select version();\"";
+if ( $? -eq 0 ) ### TODO Check for success on previous command
+{
+    die "ERROR:  This node appears to be the primary, not the DR relay.";
+}
+
+# sync archive with DR 
+system "rsync -cazq ".$cfg{'PGDATA'}."_archive/ ".$cfg{'DRNODE'}.":".$cfg{'PGDATA'}."_archive" || die "rsync to ".$cfg{'DRNODE'}." failed";
+
+exit 0;

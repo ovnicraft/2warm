@@ -1,0 +1,32 @@
+#!/usr/bin/perl -w
+use strict;
+
+# distrib2warm
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Utility script to sync 2warm directories between nodes.
+# Intended to be run from current Primary to other nodes
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+print "Running rsync ".$cfg('PGROOT'}."/2warm to ".$cfg{'OTHERNODE'};
+system "rsync -cavr --copy-links ".$cfg{'PGROOT'}."/2warm ".$cfg{'OTHERNODE'}.":".$cfg{'PGROOT'}."/" || die "rsync to ".$cfg{'OTHERNODE'}.":".$cfg{'PGROOT'}." failed";
+
+if (defined $DRNODE)
+{
+	print "Running rsync ".$cfg{'PGROOT'}."/2warm to ".$cfg{'DRNODE'};
+	system "rsync -cavr --copy-links ".$cfg{'PGROOT'}."/2warm ".$cfg{'DRNODE'}.":".$cfg{'PGROOT'}."/" || die "rsync to ".$cfg('DRNODE'}.":".$cfg{'PGROOT'}." failed";
+}

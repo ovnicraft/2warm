@@ -1,0 +1,52 @@
+#!/usr/bin/perl -w
+use strict;
+
+# triggerStandby
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Use triggerStandby to initiate "smart" failover,
+# which will wait until all WAL files are consumed
+# before starting up in normal mode.
+# If need to start database faster, then specify
+#   triggerStandby fast
+# which will switch to "fast" failover, but with
+# potential data loss.
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_pgdata;
+standby_only;
+
+# ensure that archiving won't activate immediately on new Primary
+system "rm -f ".$cfg{'LOCAL'}."/replication/archiving_active";
+
+$TRIGGERMODE="smart";
+$TRIGGERMODE=$ARGV[1] if defined $ARGV[1];
+
+# create trigger file to force pg_standby to stop
+if ($TRIGGERMODE == "fast")
+{
+  system "echo \"fast\" > ".$cfg{'PGDATA'}."/trigger" || die "Could not write to ".$cfg{'PGDATA'}."/trigger";
+}
+else
+{
+  system "touch ".$cfg{'PGDATA'}."/trigger" || die "Could not write to ".$cfg{'PGDATA'}."/trigger";
+}
+
+print "Server now triggered to start";
+print "Once recovery is complete and the server running, delete ".$cfg{'PGDATA'}."/trigger to reduce the chance of a future triggering accident";
+
+exit(0)

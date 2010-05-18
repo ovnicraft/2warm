@@ -1,0 +1,32 @@
+#!/usr/bin/perl -w
+use strict;
+
+# restoreWALfile
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Intended for use as a restore_command
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_archive;
+
+# restore file if it exists
+# PostgreSQL 8.2
+#system $cfg{'GLOBAL'}"./replication/pg_standby -c -d -r 1 -s 30 -w 0 -t trigger ".$cfg{'ARCHIVE'}." ".$ARGV[1]." ".$ARGV[2] || die "pg_standby returned error $?";
+# PostgreSQL 8.3 and 8.4
+system $cfg{'GLOBAL'}"./replication/pg_standby -c -d -r 1 -s 30 -w 0 -t trigger ".$cfg{'ARCHIVE'}." ".$ARGV[1]." ".$ARGV[2]." ".$ARGV[$3] || die "pg_standby returned error $?";
+
+exit(0);

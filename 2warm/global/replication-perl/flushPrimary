@@ -1,0 +1,107 @@
+#!/usr/bin/perl -w
+use strict;
+
+# flushPrimary
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# First part of a clean switchover from Primary to Standby
+# Next step is to run triggerStandby on Standby node
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_pgdata;
+primary_only;
+require_archive;
+
+# Save database log files to the standby
+print Saving primary log files to the standby;
+system "rsync -cav ".$cfg{'PGDATA'}."/pg_log/* ".$cfg{'OTHERNODE'}.":pg_log/";
+
+# Run a checkpoint that will likely take a long time, just to
+# clear the buffer cache out.  Then a second one executed as
+# part of the shutdown script shouldn't take very long.
+print Executing pre-flush checkpoint
+system "psql -c \"CHECKPOINT;\""
+
+# Spawn off database script that does the flush.  This checkpoint
+# should be fast.
+
+### TODO Properly handle this spawning in Perl
+
+#psql -c "SELECT pg_sleep(70); CHECKPOINT; SELECT pg_switch_xlog();" &
+#PID=$!
+
+# Wait five seconds to confirm it should have started, then prevent
+# additional connections to the database through a smart shutdown.
+# The one we've already connected above will survive this.
+print "Waiting for flush database process to connect"
+#sleep 5
+
+# Note that this whole timing might be tightened starting in PostgreSQL
+# 8.3 by using the "-t" option to pg_ctl, that doesn't exist in 8.2
+# so we're stuck assuming the default timeout of 60 seconds here.
+print "Blocking new connections to the server (60 seconds, will report failure)"
+system "pg_ctl stop -m smart -w"
+
+# Wait for the spawned script to finish, and then give the server another 5
+# seconds to complete the smart shutdown already requested
+print "Waiting for archiver flush to complete"
+### TODO Handle the waiting here too
+#wait $PID
+#sleep 5
+
+# Completely stop the server--which might have already gone down.
+# First try the fast shutdown.
+if [ -f $cfg{'PGDATA'}."/postmaster.pid" ]
+{
+    print "Stopping the server in fast mode"
+    system "pg_ctl stop -m fast -w"
+    ### TODO Properly convert this to Perl return code checking
+    if ( $? != 0 )
+    {
+        # If that didn't work, better to go down hard than not at all
+        print "Stopping the server in immediate mode"
+        system "pg_ctl stop -m immediate -w"
+    }
+    else
+    {
+        print "Server shutdown normally"
+    }   
+else
+{
+    print "Server shutdown normally"
+}
+
+# Final sanity check here 
+if ( -f $cfg{'PGDATA'}."/postmaster.pid" )
+{
+  print "ERROR:  Server appears to still be running after all possible techniques to stop it normally."
+  print "WARNING:  Copying over archives anyway, but this server has not been taken off-line properly."
+}
+
+# flush files to standby archive
+print "Flushing archive WAL files to standby"
+
+system "rsync -cz ".$cfg{'PGDATA'}."/pg_xlog/* "$cfg{'OTHERNODE'}.":".$cfg{'ARCHIVE'}."/" || die "rsync to ".$cfg{'OTHERNODE'}." failed; aborting any attempt to save to DR node as well"
+
+# flush files to DR archive
+print "Flushing archive WAL files to DR"
+if ( defined $cfg{'DRNODE'} ) 
+{
+  system "rsync -cz $.$cfg{'PGDATA'}./pg_xlog/* ".$cfg{'DRNODE'}.":".$cfg{'ARCHIVE'}."/" | exit_on_error "rsync to ".$cfg{'DRNODE'}." failed"
+}
+
+exit 0

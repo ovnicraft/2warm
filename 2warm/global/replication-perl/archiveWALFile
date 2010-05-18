@@ -1,0 +1,43 @@
+#!/usr/bin/perl -w
+use strict;
+
+# archiveWALFile
+# Copyright (c) 2ndQuadrant, 2009-2010
+#
+# Intended for use as an archive_command
+#
+# $1 	WAL filepath to be archive e.g. ~/data/pg_xlog/00000001...
+# $2	WAL filename to archive e.g. 00000001... 
+
+#####################################################################
+# Generic environment - shared by many of the scripts here.  Confirm
+# environment is setup the way we expect before running anything
+#####################################################################
+
+use FindBin;
+use lib "$FindBin::Bin/../perl-lib/lib/perl5";
+use TwoWarm::ConfigSetup;
+TwoWarm:ConfigSetup::config_setup;
+my %cfg=TwoWarm::ConfigSetup::cfg;
+
+#####################################################################
+# End of generic environment setup
+#####################################################################
+
+require_other;
+
+# archive file
+if ( -f $cfg{'LOCAL'}."/replication/archiving_active" ) 
+{
+    rc=system("rsync -cz ".$ARGV[1]." ".$cfg{'OTHERNODE'}.":".$cfgARCHIVE."/".$ARGV[2])
+    if [ rc != 0 ] ; then
+	  print $ARGV[0]," Standby rsync failed, rsyncing file to DRNODE instead"
+	  rc=system("rsync -cz ".$ARGV[1]."/ ".$DRNODE.":".$ARCHIVE."/".$ARGV[2])
+	  exit 1
+    fi
+}
+else
+{
+  print "Archiving not active:  ignoring ".$ARGV[1].".  Would normally save to ".$OTHERNODE.":".$ARCHIVE.$ARGV[2],"."
+}
+exit 0
