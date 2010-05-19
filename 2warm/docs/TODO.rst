@@ -19,6 +19,10 @@ Known Bugs
   to have issues in its current form.  Its associated documentation is
   not yet included either.
 
+* A prototype of a straight Perl port of the existing bash code may be
+  included in some 2warm packages.  The Perl implementation is not in
+  any way functional yet.
+
 Desired Features
 ================
 
@@ -39,10 +43,6 @@ as part of the long-term development on 2warm:
   connection with a transport type would allow using alternate methods
   when available.  And example is adding "zfs send" as an alternate
   to using rsync for making a base backup.
-
-* A prototype of a straight Perl port of the existing bash code may be
-  included in some 2warm packages.  The Perl implementation is not in
-  any way functional yet.
 
 * Full Windows support will be available using the Perl implementation.
 

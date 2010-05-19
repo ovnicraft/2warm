@@ -27,13 +27,15 @@ Documentation
 Full documentation is available in the docs/ subdirectory, written
 in ReST markup.  Tools that operate on ReST can be used to make
 versions of it formatted for other purposes, such as rst2html
-to make a HTML version or rst2pdf for PDF.
+to make a HTML version or rst2pdf for PDF.  The documentation
+is currently available in English and Italian.
 
 Contact
 =======
 
  * The project is hosted at http://projects.2ndQuadrant.com
- * Initial commits are done in the git reportiory at http://github.com/gregs1104/
+ * Initial commits are done in the git repository at
+   http://github.com/greg2ndQuadrant/2warm
 
 If you have any hints, changes or improvements, please contact:
 
